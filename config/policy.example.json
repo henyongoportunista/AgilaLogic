@@ -1,0 +1,27 @@
+{
+  "agent": {
+    "mode": "recommend",
+    "autonomyLevel": 2,
+    "riskTolerance": 0.25,
+    "confidenceThreshold": 0.65
+  },
+  "permissions": {
+    "gmail": {
+      "read": true,
+      "createDraft": "approval_required",
+      "send": false,
+      "archive": false,
+      "label": false,
+      "delete": false
+    },
+    "github": {
+      "read": true,
+      "writeFile": "approval_required",
+      "createBranch": false,
+      "createIssue": false,
+      "comment": false,
+      "createPullRequest": false,
+      "mergePullRequest": false
+    }
+  }
+}
