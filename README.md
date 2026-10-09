@@ -4,6 +4,10 @@
 
 > “No Chain, No Ruler: You do not beg for terms on a board you play on—you own the engine that sets them.”
 
+## Creed
+
+> **“Ako ang bida at kontrabida ng sarili kong buhay na pabida—pinanganak sa taas, sa kalangitan; lumaki sa baba, sa kalupaan; at sumisid sa karagatan, sa kailaliman. Katotohanan ang aking panata, hanggang ang pagkalimot ay tuluyang mawala.”**
+
 AgilaLogic is the conceptual and operational architecture behind **Henyong Oportunista**: a system for observing reality, filtering noise, identifying leverage, making bounded decisions, acting with explicit authority, verifying outcomes, and learning from evidence.
 
 ## Core operating loop
