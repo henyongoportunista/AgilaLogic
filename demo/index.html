@@ -14,7 +14,7 @@
         <p class="eyebrow">HENYONG TAMAD OPS × AGILALOGIC</p>
         <h1>Sovereign Scaffold</h1>
       </div>
-      <div class="status-pill"><span></span> LOCAL SANDBOX</div>
+      <div class="status-pill"><span aria-hidden="true"></span> LOCAL SANDBOX</div>
     </header>
 
     <main>
@@ -24,13 +24,13 @@
           <h2>Let agents reason.<br />Keep consequential authority human.</h2>
           <p class="lede">A working demonstration of the Sovereign Assurance Boundary: deterministic routing between an AI proposal and execution authority.</p>
         </div>
-        <div class="flow" aria-label="Node Beta to Node Alpha flow">
+        <div class="flow" role="img" aria-label="Node Beta proposes, the Sovereign Assurance Boundary routes, a human role may veto or approve, then the audit layer records the result">
           <div class="node"><small>NODE BETA</small><strong>PROPOSE</strong></div>
-          <div class="arrow">→</div>
+          <div class="arrow" aria-hidden="true">→</div>
           <div class="node active"><small>SAB</small><strong>ROUTE</strong></div>
-          <div class="arrow">→</div>
+          <div class="arrow" aria-hidden="true">→</div>
           <div class="node"><small>NODE ALPHA ROLE</small><strong>VETO / APPROVE</strong></div>
-          <div class="arrow">→</div>
+          <div class="arrow" aria-hidden="true">→</div>
           <div class="node"><small>AUDIT</small><strong>VERIFY</strong></div>
         </div>
       </section>
@@ -44,7 +44,7 @@
             </div>
           </div>
 
-          <div class="scenario-grid" id="scenarioGrid"></div>
+          <div class="scenario-grid" id="scenarioGrid" aria-label="Demo scenarios"></div>
 
           <div class="proposal-card" id="proposalCard">
             <div class="kv"><span>Action</span><strong id="pType">—</strong></div>
@@ -55,7 +55,7 @@
             <div class="kv"><span>Blast radius</span><strong id="pBlast">—</strong></div>
           </div>
 
-          <button class="primary" id="evaluateBtn">Evaluate through SAB</button>
+          <button class="primary" id="evaluateBtn" type="button">Evaluate through SAB</button>
         </article>
 
         <article class="panel decision-panel">
@@ -64,7 +64,7 @@
               <p class="eyebrow">02 / ASSURANCE BOUNDARY</p>
               <h3>Decision</h3>
             </div>
-            <span class="decision-badge neutral" id="routeBadge">NOT EVALUATED</span>
+            <span class="decision-badge neutral" id="routeBadge" aria-live="polite">NOT EVALUATED</span>
           </div>
 
           <div class="decision-body">
@@ -72,23 +72,27 @@
               <span>Consequence class</span>
               <strong id="consequence">—</strong>
             </div>
+            <div class="meter-row">
+              <span>Policy version</span>
+              <strong id="policyVersion">—</strong>
+            </div>
             <div>
               <span class="label">Reasons</span>
               <ul id="reasons" class="reason-list"><li>Run a scenario to inspect deterministic routing.</li></ul>
             </div>
           </div>
 
-          <div class="human-gate" id="humanGate" hidden>
+          <div class="human-gate" id="humanGate" role="region" aria-labelledby="humanGateTitle" hidden>
             <p class="eyebrow">HUMAN GATE REQUIRED</p>
-            <h4>Demo operator authorization</h4>
-            <p>The server stores the evaluated proposal and binds approval to the complete proposal payload. This button simulates the Node Alpha role; identity authentication is not claimed in this MVP.</p>
+            <h4 id="humanGateTitle">Demo operator authorization</h4>
+            <p>The server stores the evaluated proposal and binds approval to the complete proposal payload and policy version. This button simulates the Node Alpha role; identity authentication is not claimed in this MVP.</p>
             <div class="action-row">
-              <button class="danger" id="rejectBtn">Reject</button>
-              <button class="approve" id="approveBtn">Approve one-time sandbox authorization</button>
+              <button class="danger" id="rejectBtn" type="button">Reject</button>
+              <button class="approve" id="approveBtn" type="button">Approve one-time sandbox authorization</button>
             </div>
           </div>
 
-          <div class="result-box" id="resultBox">
+          <div class="result-box" id="resultBox" role="status" aria-live="polite" aria-atomic="true">
             <span class="label">Execution status</span>
             <strong id="executionStatus">WAITING</strong>
             <p id="executionNote">No real external side effect is executed in this demo.</p>
@@ -102,17 +106,17 @@
             <p class="eyebrow">03 / TRACEABILITY</p>
             <h3>Ephemeral audit ledger</h3>
           </div>
-          <button class="ghost" id="refreshAuditBtn">Refresh</button>
+          <button class="ghost" id="refreshAuditBtn" type="button">Refresh</button>
         </div>
-        <div id="auditList" class="audit-list">
+        <div id="auditList" class="audit-list" aria-live="polite">
           <p class="empty">No events yet.</p>
         </div>
       </section>
 
       <section class="principles">
         <div class="principle"><span>01</span><strong>Reasoning is not permission.</strong><p>Agent output is treated as a proposal, not authority.</p></div>
-        <div class="principle"><span>02</span><strong>Read-only is not automatically harmless.</strong><p>Data sensitivity is part of routing: public, internal, sensitive, and secret reads do not share one policy.</p></div>
-        <div class="principle"><span>03</span><strong>Approval must bind the whole proposal.</strong><p>Scope, target, blast radius, reversibility, sensitivity, and other proposal fields cannot silently drift after approval.</p></div>
+        <div class="principle"><span>02</span><strong>Unknown is not safe.</strong><p>Missing blast radius, cost, or secret status cannot silently inherit low-risk defaults.</p></div>
+        <div class="principle"><span>03</span><strong>Approval must bind proposal + policy.</strong><p>Scope, target, blast radius, reversibility, sensitivity, and policy version cannot silently drift after approval.</p></div>
       </section>
     </main>
 
