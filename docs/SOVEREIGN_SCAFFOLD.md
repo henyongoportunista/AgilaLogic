@@ -134,11 +134,28 @@ This prototype deliberately does **not** claim:
 - quantitative Free Energy minimization,
 - prompt-injection prevention by persona logic.
 
+### Critical production boundary: who is allowed to describe the action?
+
+The current demo uses scripted proposal metadata. Runtime validation can prove that metadata has an allowed shape, but it **cannot prove that the metadata truthfully describes the real operation**.
+
+A future model must therefore never be allowed to self-certify security-relevant facts such as:
+
+- `type = READ`,
+- `scope = SANDBOX`,
+- `dataSensitivity = PUBLIC`,
+- a small blast radius,
+- reversibility,
+- target identity.
+
+Before any real execution adapter is connected, those fields must be derived or independently verified at the trusted tool/adapter boundary from the concrete operation being executed. The policy enforcement point must compare the attested execution metadata against the approved proposal and fail closed on disagreement.
+
+This is the highest-priority production blocker after this MVP. Schema validation protects the shape of a claim; adapter attestation must protect the truth of the claim.
+
 The UI's approval button is a **demo operator simulating the Node Alpha role**. It is not proof of who clicked it.
 
 The in-memory audit list is an ephemeral demonstration ledger, not a compliance-grade audit trail.
 
-A public deployment should remain non-mutating until authentication, persistent audit storage, rate limiting, CSRF/session protections as applicable, and an execution-specific authorization layer are implemented and tested.
+A public deployment should remain non-mutating until authentication, persistent audit storage, rate limiting, CSRF/session protections as applicable, metadata attestation at the execution boundary, and an execution-specific authorization layer are implemented and tested.
 
 ## Relationship to AgilaLogic
 
@@ -172,13 +189,14 @@ This is intentionally narrow. It proves the central control boundary before addi
 
 ## Next implementation steps
 
-1. Persist SAB audit events and pending approvals in Supabase with append-only semantics where practical.
-2. Add authenticated Node Alpha identity and cryptographically bound approvals.
-3. Add one strictly sandboxed execution adapter with its own policy enforcement point.
-4. Connect one real model provider as Node Beta proposal generation.
-5. Add rate limiting and public-demo abuse controls before internet exposure.
-6. Add policy-version binding and regression cases as new action classes are introduced.
-7. Deploy the portfolio demo only after the public threat model is reviewed.
+1. Define an execution-adapter attestation contract that derives/verifies action type, scope, target, sensitivity, reversibility, and blast radius from the concrete tool call.
+2. Persist SAB audit events and pending approvals in Supabase with append-only semantics where practical.
+3. Add authenticated Node Alpha identity and cryptographically bound approvals.
+4. Add one strictly sandboxed execution adapter with its own policy enforcement point and metadata attestation.
+5. Connect one real model provider as Node Beta proposal generation; model-produced metadata remains untrusted until adapter verification.
+6. Add rate limiting and public-demo abuse controls before internet exposure.
+7. Add policy-version binding and regression cases as new action classes are introduced.
+8. Deploy the portfolio demo only after the public threat model is reviewed.
 
 ## Design rule
 
