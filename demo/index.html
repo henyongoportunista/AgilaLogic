@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Sovereign Scaffold — Human-Controlled AI Action Gateway</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">HENYONG TAMAD OPS × AGILALOGIC</p>
+        <h1>Sovereign Scaffold</h1>
+      </div>
+      <div class="status-pill"><span></span> LOCAL SANDBOX</div>
+    </header>
+
+    <main>
+      <section class="hero panel">
+        <div>
+          <p class="eyebrow">CAPABILITY ≠ AUTHORITY</p>
+          <h2>Let agents reason.<br />Keep consequential authority human.</h2>
+          <p class="lede">A working demonstration of the Sovereign Assurance Boundary: deterministic routing between an AI proposal and execution.</p>
+        </div>
+        <div class="flow" aria-label="Node Beta to Node Alpha flow">
+          <div class="node"><small>NODE BETA</small><strong>PROPOSE</strong></div>
+          <div class="arrow">→</div>
+          <div class="node active"><small>SAB</small><strong>ROUTE</strong></div>
+          <div class="arrow">→</div>
+          <div class="node"><small>NODE ALPHA</small><strong>VETO / APPROVE</strong></div>
+          <div class="arrow">→</div>
+          <div class="node"><small>AUDIT</small><strong>VERIFY</strong></div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <article class="panel scenario-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">01 / PROPOSAL</p>
+              <h3>Choose a scenario</h3>
+            </div>
+          </div>
+
+          <div class="scenario-grid" id="scenarioGrid"></div>
+
+          <div class="proposal-card" id="proposalCard">
+            <div class="kv"><span>Action</span><strong id="pType">—</strong></div>
+            <div class="kv"><span>Scope</span><strong id="pScope">—</strong></div>
+            <div class="kv"><span>Target</span><strong id="pTarget">—</strong></div>
+            <div class="kv"><span>Reversible</span><strong id="pReversible">—</strong></div>
+            <div class="kv"><span>Blast radius</span><strong id="pBlast">—</strong></div>
+          </div>
+
+          <button class="primary" id="evaluateBtn">Evaluate through SAB</button>
+        </article>
+
+        <article class="panel decision-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">02 / ASSURANCE BOUNDARY</p>
+              <h3>Decision</h3>
+            </div>
+            <span class="decision-badge neutral" id="routeBadge">NOT EVALUATED</span>
+          </div>
+
+          <div class="decision-body">
+            <div class="meter-row">
+              <span>Consequence class</span>
+              <strong id="consequence">—</strong>
+            </div>
+            <div>
+              <span class="label">Reasons</span>
+              <ul id="reasons" class="reason-list"><li>Run a scenario to inspect deterministic routing.</li></ul>
+            </div>
+          </div>
+
+          <div class="human-gate" id="humanGate" hidden>
+            <p class="eyebrow">NODE ALPHA REQUIRED</p>
+            <h4>Human authorization gate</h4>
+            <p>This approval is bound to this exact proposal ID, action type, and target.</p>
+            <div class="action-row">
+              <button class="danger" id="rejectBtn">Reject</button>
+              <button class="approve" id="approveBtn">Approve sandbox authorization</button>
+            </div>
+          </div>
+
+          <div class="result-box" id="resultBox">
+            <span class="label">Execution status</span>
+            <strong id="executionStatus">WAITING</strong>
+            <p id="executionNote">No real external side effect is executed in this demo.</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel audit-panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">03 / TRACEABILITY</p>
+            <h3>Audit ledger</h3>
+          </div>
+          <button class="ghost" id="refreshAuditBtn">Refresh</button>
+        </div>
+        <div id="auditList" class="audit-list">
+          <p class="empty">No events yet.</p>
+        </div>
+      </section>
+
+      <section class="principles">
+        <div class="principle"><span>01</span><strong>Reasoning is not permission.</strong><p>Agent output is treated as a proposal, not authority.</p></div>
+        <div class="principle"><span>02</span><strong>Higher consequence, stronger gate.</strong><p>Production, external, financial, and irreversible actions receive stricter routing.</p></div>
+        <div class="principle"><span>03</span><strong>Approval must match exactly.</strong><p>No permission drift from one action, target, or proposal to another.</p></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Experimental working prototype — not a claim of formal verification or complete enterprise security.</span>
+      <span>Node Alpha owns final authority.</span>
+    </footer>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
