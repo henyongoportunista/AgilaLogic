@@ -1,4 +1,5 @@
 import {
+  SAB_POLICY_VERSION,
   evaluateProposal,
   isExecutionAuthorized,
   proposalBinding,
@@ -19,13 +20,15 @@ const publicRead: ActionProposal = {
   target: "public.catalog",
   reversible: true,
   dataSensitivity: "PUBLIC",
+  affectedRecords: 250,
 };
 
 {
-  const decision = evaluateProposal(publicRead);
-  assert(decision.route === "ALLOW", `expected ALLOW, got ${decision.route}`);
-  assert(decision.consequence === "LOW", `expected LOW, got ${decision.consequence}`);
-  assert(isExecutionAuthorized(publicRead, undefined, now), "public read should be authorized");
+  const result = evaluateProposal(publicRead);
+  assert(result.route === "ALLOW", `expected ALLOW, got ${result.route}`);
+  assert(result.consequence === "LOW", `expected LOW, got ${result.consequence}`);
+  assert(result.policyVersion === SAB_POLICY_VERSION, "decision must expose active policy version");
+  assert(isExecutionAuthorized(publicRead, undefined, now), "bounded public read should be authorized");
 }
 
 const internalRead: ActionProposal = {
@@ -36,9 +39,9 @@ const internalRead: ActionProposal = {
 };
 
 {
-  const decision = evaluateProposal(internalRead);
-  assert(decision.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${decision.route}`);
-  assert(decision.consequence === "MEDIUM", `expected MEDIUM, got ${decision.consequence}`);
+  const result = evaluateProposal(internalRead);
+  assert(result.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${result.route}`);
+  assert(result.consequence === "MEDIUM", `expected MEDIUM, got ${result.consequence}`);
 }
 
 const sensitiveRead: ActionProposal = {
@@ -49,12 +52,37 @@ const sensitiveRead: ActionProposal = {
 };
 
 {
-  const decision = evaluateProposal(sensitiveRead);
+  const result = evaluateProposal(sensitiveRead);
   assert(
-    decision.route === "REQUIRE_HUMAN_APPROVAL",
-    `sensitive read should require approval, got ${decision.route}`,
+    result.route === "REQUIRE_HUMAN_APPROVAL",
+    `sensitive read should require approval, got ${result.route}`,
   );
   assert(!isExecutionAuthorized(sensitiveRead, undefined, now), "sensitive read must stop at gate");
+}
+
+{
+  const unknownReadScope: ActionProposal = {
+    ...publicRead,
+    id: "read-unknown-size",
+    affectedRecords: undefined,
+  };
+  const result = evaluateProposal(unknownReadScope);
+  assert(
+    result.route === "REQUIRE_HUMAN_APPROVAL",
+    "unknown read blast radius must not be treated as zero",
+  );
+  assert(result.reasons.includes("unknown_read_blast_radius"), "unknown read size reason must be explicit");
+}
+
+{
+  const bulkPublicRead: ActionProposal = {
+    ...publicRead,
+    id: "read-bulk-public",
+    affectedRecords: 50_000,
+  };
+  const result = evaluateProposal(bulkPublicRead);
+  assert(result.route === "REQUIRE_HUMAN_APPROVAL", "bulk public reads must be authority-gated");
+  assert(result.reasons.includes("bulk_read_requires_authority"), "bulk read reason must be explicit");
 }
 
 const sandboxWrite: ActionProposal = {
@@ -65,15 +93,35 @@ const sandboxWrite: ActionProposal = {
   reversible: true,
   dataSensitivity: "INTERNAL",
   affectedRecords: 5,
+  estimatedCost: 0,
+  containsSecrets: false,
 };
 
 {
-  const decision = evaluateProposal(sandboxWrite);
-  assert(decision.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${decision.route}`);
+  const result = evaluateProposal(sandboxWrite);
+  assert(result.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${result.route}`);
   assert(
     isExecutionAuthorized(sandboxWrite, undefined, now),
-    "bounded internal sandbox write should be authorized",
+    "fully bounded internal sandbox write should be authorized",
   );
+}
+
+{
+  const incompleteSandboxWrite: ActionProposal = {
+    ...sandboxWrite,
+    id: "write-incomplete-1",
+    affectedRecords: undefined,
+    estimatedCost: undefined,
+    containsSecrets: undefined,
+  };
+  const result = evaluateProposal(incompleteSandboxWrite);
+  assert(
+    result.route === "REQUIRE_HUMAN_APPROVAL",
+    "missing low-risk metadata must not inherit harmless defaults",
+  );
+  assert(result.reasons.includes("unknown_blast_radius"), "unknown blast radius must be explicit");
+  assert(result.reasons.includes("unknown_cost"), "unknown cost must be explicit");
+  assert(result.reasons.includes("unknown_secret_status"), "unknown secret status must be explicit");
 }
 
 const sensitiveSandboxWrite: ActionProposal = {
@@ -83,9 +131,9 @@ const sensitiveSandboxWrite: ActionProposal = {
 };
 
 {
-  const decision = evaluateProposal(sensitiveSandboxWrite);
+  const result = evaluateProposal(sensitiveSandboxWrite);
   assert(
-    decision.route === "REQUIRE_HUMAN_APPROVAL",
+    result.route === "REQUIRE_HUMAN_APPROVAL",
     "sensitive sandbox data should not inherit low-risk auto-admission",
   );
 }
@@ -98,15 +146,17 @@ const destructiveProposal: ActionProposal = {
   reversible: false,
   dataSensitivity: "SENSITIVE",
   affectedRecords: 47,
+  estimatedCost: 0,
+  containsSecrets: false,
 };
 
 {
-  const decision = evaluateProposal(destructiveProposal);
+  const result = evaluateProposal(destructiveProposal);
   assert(
-    decision.route === "REQUIRE_HUMAN_APPROVAL",
-    `expected REQUIRE_HUMAN_APPROVAL, got ${decision.route}`,
+    result.route === "REQUIRE_HUMAN_APPROVAL",
+    `expected REQUIRE_HUMAN_APPROVAL, got ${result.route}`,
   );
-  assert(decision.consequence === "HIGH", `expected HIGH, got ${decision.consequence}`);
+  assert(result.consequence === "HIGH", `expected HIGH, got ${result.consequence}`);
   assert(
     !isExecutionAuthorized(destructiveProposal, undefined, now),
     "must not execute without approval",
@@ -119,6 +169,7 @@ const destructiveProposal: ActionProposal = {
     approvedBy: "demo-operator",
     issuedAt: "2026-10-24T23:59:00.000Z",
     expiresAt: "2026-10-25T00:05:00.000Z",
+    policyVersion: SAB_POLICY_VERSION,
   };
 
   assert(
@@ -139,10 +190,7 @@ const destructiveProposal: ActionProposal = {
     ...destructiveProposal,
     scope: "EXTERNAL",
   };
-  assert(
-    !isExecutionAuthorized(scopeDrift, approval, now),
-    "approval must fail when scope changes",
-  );
+  assert(!isExecutionAuthorized(scopeDrift, approval, now), "approval must fail when scope changes");
 
   const sensitivityDrift: ActionProposal = {
     ...destructiveProposal,
@@ -151,6 +199,15 @@ const destructiveProposal: ActionProposal = {
   assert(
     !isExecutionAuthorized(sensitivityDrift, approval, now),
     "approval must fail when data sensitivity changes",
+  );
+
+  const stalePolicyApproval: ApprovalRecord = {
+    ...approval,
+    policyVersion: "2026-10-25.1",
+  };
+  assert(
+    !isExecutionAuthorized(destructiveProposal, stalePolicyApproval, now),
+    "approval issued under another policy version must fail",
   );
 
   const expiredApproval: ApprovalRecord = {
@@ -182,12 +239,14 @@ const destructiveProposal: ActionProposal = {
     target: "unknown-webhook",
     reversible: false,
     dataSensitivity: "SECRET",
+    affectedRecords: 1,
+    estimatedCost: 0,
     containsSecrets: true,
   };
 
-  const decision = evaluateProposal(exfiltration);
-  assert(decision.route === "DENY", `expected DENY, got ${decision.route}`);
-  assert(!decision.requiresApproval, "hard-denied action should not be approval-bypassable");
+  const result = evaluateProposal(exfiltration);
+  assert(result.route === "DENY", `expected DENY, got ${result.route}`);
+  assert(!result.requiresApproval, "hard-denied action should not be approval-bypassable");
 
   const fakeApproval: ApprovalRecord = {
     proposalId: exfiltration.id,
@@ -196,10 +255,26 @@ const destructiveProposal: ActionProposal = {
     approvedBy: "demo-operator",
     issuedAt: "2026-10-24T23:59:00.000Z",
     expiresAt: "2026-10-25T00:05:00.000Z",
+    policyVersion: SAB_POLICY_VERSION,
   };
   assert(
     !isExecutionAuthorized(exfiltration, fakeApproval, now),
     "DENY must remain non-bypassable even with an exact approval",
+  );
+}
+
+{
+  const contradictorySecretFlag = {
+    ...sandboxWrite,
+    id: "contradiction-secret-1",
+    dataSensitivity: "PUBLIC",
+    containsSecrets: true,
+  };
+  const result = evaluateProposal(contradictorySecretFlag);
+  assert(result.route === "DENY", "contradictory secret metadata must fail closed");
+  assert(
+    result.reasons.includes("secret_flag_requires_secret_sensitivity"),
+    "secret/sensitivity contradiction must be explicit",
   );
 }
 
@@ -214,10 +289,10 @@ const destructiveProposal: ActionProposal = {
     affectedRecords: -10,
   };
 
-  const decision = evaluateProposal(malformed);
-  assert(decision.route === "DENY", "invalid metadata must fail closed");
+  const result = evaluateProposal(malformed);
+  assert(result.route === "DENY", "invalid metadata must fail closed");
   assert(
-    decision.reasons.includes("invalid_proposal_metadata"),
+    result.reasons.includes("invalid_proposal_metadata"),
     "invalid metadata reason must be explicit",
   );
   assert(!isExecutionAuthorized(malformed, undefined, now), "malformed action must never authorize");
@@ -228,8 +303,8 @@ const destructiveProposal: ActionProposal = {
     ...sandboxWrite,
     hiddenPrivilegeEscalation: true,
   };
-  const decision = evaluateProposal(unexpectedField);
-  assert(decision.route === "DENY", "unexpected policy fields must fail closed");
+  const result = evaluateProposal(unexpectedField);
+  assert(result.route === "DENY", "unexpected policy fields must fail closed");
 }
 
-console.log("SAB adversarial tests passed");
+console.log("SAB round-2 adversarial tests passed");
