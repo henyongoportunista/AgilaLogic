@@ -19,6 +19,8 @@ export type SabRoute =
   | "REQUIRE_HUMAN_APPROVAL"
   | "DENY";
 
+export const SAB_POLICY_VERSION = "2026-10-25.2";
+
 export interface ActionProposal {
   id: string;
   type: ActionType;
@@ -36,6 +38,7 @@ export interface SabDecision {
   consequence: ConsequenceClass;
   reasons: string[];
   requiresApproval: boolean;
+  policyVersion: string;
 }
 
 export interface ApprovalRecord {
@@ -45,6 +48,7 @@ export interface ApprovalRecord {
   approvedBy: string;
   issuedAt: string;
   expiresAt: string;
+  policyVersion: string;
 }
 
 const ACTION_TYPES = new Set<ActionType>([
@@ -94,6 +98,7 @@ const HIGH_IMPACT_ACTIONS = new Set<ActionType>([
 ]);
 
 const MAX_APPROVAL_TTL_MS = 15 * 60_000;
+const BULK_READ_THRESHOLD = 10_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -108,6 +113,15 @@ function validOptionalNonNegativeNumber(value: unknown, max: number): boolean {
     value === undefined ||
     (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max)
   );
+}
+
+function decision(
+  route: SabRoute,
+  consequence: ConsequenceClass,
+  reasons: string[],
+  requiresApproval: boolean,
+): SabDecision {
+  return { route, consequence, reasons, requiresApproval, policyVersion: SAB_POLICY_VERSION };
 }
 
 /**
@@ -148,6 +162,13 @@ export function validateProposal(input: unknown): string[] {
     errors.push("invalid_contains_secrets");
   }
 
+  if (
+    input.containsSecrets === true &&
+    input.dataSensitivity !== "SECRET"
+  ) {
+    errors.push("secret_flag_requires_secret_sensitivity");
+  }
+
   return errors;
 }
 
@@ -173,6 +194,9 @@ export function proposalBinding(proposal: ActionProposal): string {
 
 function consequenceOf(proposal: ActionProposal): ConsequenceClass {
   if (proposal.type === "READ") {
+    if (proposal.affectedRecords === undefined || proposal.affectedRecords >= BULK_READ_THRESHOLD) {
+      return "HIGH";
+    }
     if (proposal.dataSensitivity === "PUBLIC") return "LOW";
     if (proposal.dataSensitivity === "INTERNAL") return "MEDIUM";
     if (proposal.dataSensitivity === "SENSITIVE") return "HIGH";
@@ -196,17 +220,17 @@ function consequenceOf(proposal: ActionProposal): ConsequenceClass {
 
 /**
  * Deterministic admission layer between an AI proposal and execution.
- * Invalid or ambiguous metadata fails closed.
+ * Invalid or ambiguous metadata fails closed or routes to human authority.
  */
 export function evaluateProposal(input: unknown): SabDecision {
   const validationErrors = validateProposal(input);
   if (validationErrors.length > 0) {
-    return {
-      route: "DENY",
-      consequence: "CRITICAL",
-      reasons: ["invalid_proposal_metadata", ...validationErrors.slice(0, 4)],
-      requiresApproval: false,
-    };
+    return decision(
+      "DENY",
+      "CRITICAL",
+      ["invalid_proposal_metadata", ...validationErrors.slice(0, 4)],
+      false,
+    );
   }
 
   const proposal = input as ActionProposal;
@@ -217,78 +241,88 @@ export function evaluateProposal(input: unknown): SabDecision {
     proposal.scope === "EXTERNAL" &&
     (proposal.containsSecrets || proposal.dataSensitivity === "SECRET")
   ) {
-    return {
-      route: "DENY",
-      consequence: "CRITICAL",
-      reasons: ["secret_exfiltration_blocked"],
-      requiresApproval: false,
-    };
+    return decision("DENY", "CRITICAL", ["secret_exfiltration_blocked"], false);
   }
 
   if (proposal.type === "READ") {
-    if (proposal.dataSensitivity === "PUBLIC") {
-      return {
-        route: "ALLOW",
+    if (proposal.affectedRecords === undefined) {
+      return decision(
+        "REQUIRE_HUMAN_APPROVAL",
         consequence,
-        reasons: ["public_read_only"],
-        requiresApproval: false,
-      };
+        ["unknown_read_blast_radius"],
+        true,
+      );
+    }
+
+    if (proposal.affectedRecords >= BULK_READ_THRESHOLD) {
+      return decision(
+        "REQUIRE_HUMAN_APPROVAL",
+        consequence,
+        ["bulk_read_requires_authority"],
+        true,
+      );
+    }
+
+    if (proposal.dataSensitivity === "PUBLIC") {
+      return decision("ALLOW", consequence, ["bounded_public_read_only"], false);
     }
 
     if (proposal.dataSensitivity === "INTERNAL") {
-      return {
-        route: "ALLOW_WITH_LOG",
-        consequence,
-        reasons: ["internal_read_logged"],
-        requiresApproval: false,
-      };
+      return decision("ALLOW_WITH_LOG", consequence, ["bounded_internal_read_logged"], false);
     }
 
-    return {
-      route: "REQUIRE_HUMAN_APPROVAL",
+    return decision(
+      "REQUIRE_HUMAN_APPROVAL",
       consequence,
-      reasons: ["sensitive_read_requires_authority"],
-      requiresApproval: true,
-    };
+      ["sensitive_read_requires_authority"],
+      true,
+    );
   }
 
-  if (
+  const boundedSandboxWrite =
     proposal.type === "WRITE" &&
     proposal.scope === "SANDBOX" &&
     proposal.reversible &&
-    (proposal.affectedRecords ?? 0) < 25 &&
-    (proposal.dataSensitivity === "PUBLIC" || proposal.dataSensitivity === "INTERNAL")
-  ) {
-    return {
-      route: "ALLOW_WITH_LOG",
+    typeof proposal.affectedRecords === "number" &&
+    proposal.affectedRecords < 25 &&
+    proposal.estimatedCost === 0 &&
+    proposal.containsSecrets === false &&
+    (proposal.dataSensitivity === "PUBLIC" || proposal.dataSensitivity === "INTERNAL");
+
+  if (boundedSandboxWrite) {
+    return decision(
+      "ALLOW_WITH_LOG",
       consequence,
-      reasons: ["bounded_reversible_sandbox_write"],
-      requiresApproval: false,
-    };
+      ["bounded_reversible_sandbox_write"],
+      false,
+    );
   }
 
   if (HIGH_IMPACT_ACTIONS.has(proposal.type)) reasons.push("high_impact_action");
   if (proposal.scope === "PRODUCTION") reasons.push("production_scope");
   if (proposal.scope === "EXTERNAL") reasons.push("external_effect");
   if (!proposal.reversible) reasons.push("irreversible_or_hard_to_reverse");
-  if ((proposal.affectedRecords ?? 0) >= 25) reasons.push("large_blast_radius");
-  if ((proposal.estimatedCost ?? 0) > 0) reasons.push("financial_consequence");
+  if (proposal.affectedRecords === undefined) reasons.push("unknown_blast_radius");
+  else if (proposal.affectedRecords >= 25) reasons.push("large_blast_radius");
+  if (proposal.estimatedCost === undefined) reasons.push("unknown_cost");
+  else if (proposal.estimatedCost > 0) reasons.push("financial_consequence");
+  if (proposal.containsSecrets === undefined) reasons.push("unknown_secret_status");
   if (proposal.dataSensitivity === "SENSITIVE" || proposal.dataSensitivity === "SECRET") {
     reasons.push("sensitive_data");
   }
 
-  return {
-    route: "REQUIRE_HUMAN_APPROVAL",
+  return decision(
+    "REQUIRE_HUMAN_APPROVAL",
     consequence,
-    reasons: reasons.length > 0 ? reasons : ["state_mutation_requires_authority"],
-    requiresApproval: true,
-  };
+    reasons.length > 0 ? reasons : ["state_mutation_requires_authority"],
+    true,
+  );
 }
 
 /**
  * Authorization always recomputes policy from the proposal. A caller cannot supply
  * a pre-forged SAB decision. Approval is bound to every proposal field through
- * proposalBinding(), not merely an ID/type/target tuple.
+ * proposalBinding(), plus the active policy version.
  */
 export function isExecutionAuthorized(
   input: unknown,
@@ -299,11 +333,12 @@ export function isExecutionAuthorized(
   if (validationErrors.length > 0) return false;
 
   const proposal = input as ActionProposal;
-  const decision = evaluateProposal(proposal);
+  const currentDecision = evaluateProposal(proposal);
 
-  if (decision.route === "DENY") return false;
-  if (decision.route === "ALLOW" || decision.route === "ALLOW_WITH_LOG") return true;
+  if (currentDecision.route === "DENY") return false;
+  if (currentDecision.route === "ALLOW" || currentDecision.route === "ALLOW_WITH_LOG") return true;
   if (!approval?.approved) return false;
+  if (approval.policyVersion !== SAB_POLICY_VERSION) return false;
   if (approval.proposalId !== proposal.id) return false;
   if (approval.proposalBinding !== proposalBinding(proposal)) return false;
   if (!validString(approval.approvedBy, 200)) return false;
