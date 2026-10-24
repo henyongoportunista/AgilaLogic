@@ -1,6 +1,7 @@
 import {
   evaluateProposal,
   isExecutionAuthorized,
+  proposalBinding,
   type ActionProposal,
   type ApprovalRecord,
 } from "./sab.js";
@@ -9,11 +10,13 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+const now = new Date("2026-10-25T00:00:00.000Z");
+
 const readProposal: ActionProposal = {
   id: "read-1",
   type: "READ",
   scope: "PRODUCTION",
-  target: "customers",
+  target: "public.catalog",
   reversible: true,
 };
 
@@ -21,7 +24,7 @@ const readProposal: ActionProposal = {
   const decision = evaluateProposal(readProposal);
   assert(decision.route === "ALLOW", `expected ALLOW, got ${decision.route}`);
   assert(decision.consequence === "LOW", `expected LOW, got ${decision.consequence}`);
-  assert(isExecutionAuthorized(readProposal, decision), "read should be authorized");
+  assert(isExecutionAuthorized(readProposal, undefined, now), "read should be authorized");
 }
 
 const sandboxWrite: ActionProposal = {
@@ -36,7 +39,10 @@ const sandboxWrite: ActionProposal = {
 {
   const decision = evaluateProposal(sandboxWrite);
   assert(decision.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${decision.route}`);
-  assert(isExecutionAuthorized(sandboxWrite, decision), "bounded sandbox write should be authorized");
+  assert(
+    isExecutionAuthorized(sandboxWrite, undefined, now),
+    "bounded sandbox write should be authorized",
+  );
 }
 
 const destructiveProposal: ActionProposal = {
@@ -55,28 +61,61 @@ const destructiveProposal: ActionProposal = {
     `expected REQUIRE_HUMAN_APPROVAL, got ${decision.route}`,
   );
   assert(decision.consequence === "HIGH", `expected HIGH, got ${decision.consequence}`);
-  assert(!isExecutionAuthorized(destructiveProposal, decision), "must not execute without approval");
+  assert(
+    !isExecutionAuthorized(destructiveProposal, undefined, now),
+    "must not execute without approval",
+  );
 
   const approval: ApprovalRecord = {
     proposalId: destructiveProposal.id,
-    actionType: destructiveProposal.type,
-    target: destructiveProposal.target,
+    proposalBinding: proposalBinding(destructiveProposal),
     approved: true,
-    approvedBy: "node-alpha",
+    approvedBy: "demo-operator",
+    issuedAt: "2026-10-24T23:59:00.000Z",
+    expiresAt: "2026-10-25T00:05:00.000Z",
   };
 
   assert(
-    isExecutionAuthorized(destructiveProposal, decision, approval),
-    "exact human approval should authorize the proposal",
+    isExecutionAuthorized(destructiveProposal, approval, now),
+    "exact short-lived approval should authorize the proposal",
   );
 
-  const driftedApproval: ApprovalRecord = {
-    ...approval,
-    target: "customers:all",
+  const blastRadiusDrift: ActionProposal = {
+    ...destructiveProposal,
+    affectedRecords: 4700,
   };
   assert(
-    !isExecutionAuthorized(destructiveProposal, decision, driftedApproval),
-    "approval target drift must be rejected",
+    !isExecutionAuthorized(blastRadiusDrift, approval, now),
+    "approval must fail when blast radius changes without changing ID/type/target",
+  );
+
+  const scopeDrift: ActionProposal = {
+    ...destructiveProposal,
+    scope: "EXTERNAL",
+  };
+  assert(
+    !isExecutionAuthorized(scopeDrift, approval, now),
+    "approval must fail when scope changes",
+  );
+
+  const expiredApproval: ApprovalRecord = {
+    ...approval,
+    issuedAt: "2026-10-24T23:40:00.000Z",
+    expiresAt: "2026-10-24T23:55:00.000Z",
+  };
+  assert(
+    !isExecutionAuthorized(destructiveProposal, expiredApproval, now),
+    "expired approval must fail closed",
+  );
+
+  const excessiveTtlApproval: ApprovalRecord = {
+    ...approval,
+    issuedAt: "2026-10-24T23:59:00.000Z",
+    expiresAt: "2026-10-25T00:30:00.000Z",
+  };
+  assert(
+    !isExecutionAuthorized(destructiveProposal, excessiveTtlApproval, now),
+    "approval TTL above policy maximum must be rejected",
   );
 }
 
@@ -93,7 +132,47 @@ const destructiveProposal: ActionProposal = {
   const decision = evaluateProposal(exfiltration);
   assert(decision.route === "DENY", `expected DENY, got ${decision.route}`);
   assert(!decision.requiresApproval, "hard-denied action should not be approval-bypassable");
-  assert(!isExecutionAuthorized(exfiltration, decision), "denied action must never execute");
+
+  const fakeApproval: ApprovalRecord = {
+    proposalId: exfiltration.id,
+    proposalBinding: proposalBinding(exfiltration),
+    approved: true,
+    approvedBy: "demo-operator",
+    issuedAt: "2026-10-24T23:59:00.000Z",
+    expiresAt: "2026-10-25T00:05:00.000Z",
+  };
+  assert(
+    !isExecutionAuthorized(exfiltration, fakeApproval, now),
+    "DENY must remain non-bypassable even with an exact approval",
+  );
 }
 
-console.log("SAB tests passed");
+{
+  const malformed = {
+    id: "malformed-1",
+    type: "READ_AND_DELETE",
+    scope: "PRODUCTION",
+    target: "customers",
+    reversible: "yes",
+    affectedRecords: -10,
+  };
+
+  const decision = evaluateProposal(malformed);
+  assert(decision.route === "DENY", "invalid metadata must fail closed");
+  assert(
+    decision.reasons.includes("invalid_proposal_metadata"),
+    "invalid metadata reason must be explicit",
+  );
+  assert(!isExecutionAuthorized(malformed, undefined, now), "malformed action must never authorize");
+}
+
+{
+  const unexpectedField = {
+    ...sandboxWrite,
+    hiddenPrivilegeEscalation: true,
+  };
+  const decision = evaluateProposal(unexpectedField);
+  assert(decision.route === "DENY", "unexpected policy fields must fail closed");
+}
+
+console.log("SAB adversarial tests passed");
