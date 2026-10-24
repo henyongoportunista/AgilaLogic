@@ -22,14 +22,14 @@
         <div>
           <p class="eyebrow">CAPABILITY ≠ AUTHORITY</p>
           <h2>Let agents reason.<br />Keep consequential authority human.</h2>
-          <p class="lede">A working demonstration of the Sovereign Assurance Boundary: deterministic routing between an AI proposal and execution.</p>
+          <p class="lede">A working demonstration of the Sovereign Assurance Boundary: deterministic routing between an AI proposal and execution authority.</p>
         </div>
         <div class="flow" aria-label="Node Beta to Node Alpha flow">
           <div class="node"><small>NODE BETA</small><strong>PROPOSE</strong></div>
           <div class="arrow">→</div>
           <div class="node active"><small>SAB</small><strong>ROUTE</strong></div>
           <div class="arrow">→</div>
-          <div class="node"><small>NODE ALPHA</small><strong>VETO / APPROVE</strong></div>
+          <div class="node"><small>NODE ALPHA ROLE</small><strong>VETO / APPROVE</strong></div>
           <div class="arrow">→</div>
           <div class="node"><small>AUDIT</small><strong>VERIFY</strong></div>
         </div>
@@ -78,12 +78,12 @@
           </div>
 
           <div class="human-gate" id="humanGate" hidden>
-            <p class="eyebrow">NODE ALPHA REQUIRED</p>
-            <h4>Human authorization gate</h4>
-            <p>This approval is bound to this exact proposal ID, action type, and target.</p>
+            <p class="eyebrow">HUMAN GATE REQUIRED</p>
+            <h4>Demo operator authorization</h4>
+            <p>The server stores the evaluated proposal and binds approval to the complete proposal payload. This button simulates the Node Alpha role; identity authentication is not claimed in this MVP.</p>
             <div class="action-row">
               <button class="danger" id="rejectBtn">Reject</button>
-              <button class="approve" id="approveBtn">Approve sandbox authorization</button>
+              <button class="approve" id="approveBtn">Approve one-time sandbox authorization</button>
             </div>
           </div>
 
@@ -99,7 +99,7 @@
         <div class="section-head">
           <div>
             <p class="eyebrow">03 / TRACEABILITY</p>
-            <h3>Audit ledger</h3>
+            <h3>Ephemeral audit ledger</h3>
           </div>
           <button class="ghost" id="refreshAuditBtn">Refresh</button>
         </div>
@@ -111,13 +111,13 @@
       <section class="principles">
         <div class="principle"><span>01</span><strong>Reasoning is not permission.</strong><p>Agent output is treated as a proposal, not authority.</p></div>
         <div class="principle"><span>02</span><strong>Higher consequence, stronger gate.</strong><p>Production, external, financial, and irreversible actions receive stricter routing.</p></div>
-        <div class="principle"><span>03</span><strong>Approval must match exactly.</strong><p>No permission drift from one action, target, or proposal to another.</p></div>
+        <div class="principle"><span>03</span><strong>Approval must bind the whole proposal.</strong><p>Scope, target, blast radius, reversibility, and other proposal fields cannot silently drift after approval.</p></div>
       </section>
     </main>
 
     <footer>
       <span>Experimental working prototype — not a claim of formal verification or complete enterprise security.</span>
-      <span>Node Alpha owns final authority.</span>
+      <span>Demo operator ≠ authenticated Node Alpha identity.</span>
     </footer>
   </div>
 
