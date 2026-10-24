@@ -133,7 +133,10 @@ export function validateProposal(input: unknown): string[] {
 
   const errors: string[] = [];
   for (const key of Object.keys(input)) {
-    if (!PROPOSAL_FIELDS.has(key)) errors.push(`unexpected_field:${key}`);
+    if (!PROPOSAL_FIELDS.has(key)) {
+      errors.push("unexpected_field");
+      break;
+    }
   }
 
   if (!validString(input.id, 160)) errors.push("invalid_id");
@@ -162,10 +165,7 @@ export function validateProposal(input: unknown): string[] {
     errors.push("invalid_contains_secrets");
   }
 
-  if (
-    input.containsSecrets === true &&
-    input.dataSensitivity !== "SECRET"
-  ) {
+  if (input.containsSecrets === true && input.dataSensitivity !== "SECRET") {
     errors.push("secret_flag_requires_secret_sensitivity");
   }
 
