@@ -54,6 +54,7 @@ const HIGH_IMPACT_ACTIONS = new Set<ActionType>([
 ]);
 
 function consequenceOf(proposal: ActionProposal): ConsequenceClass {
+  if (proposal.type === "READ") return "LOW";
   if (proposal.containsSecrets && proposal.scope === "EXTERNAL") return "CRITICAL";
   if (proposal.type === "PERMISSION_CHANGE") return "CRITICAL";
   if (proposal.type === "PAYMENT" || proposal.type === "DELETE") return "HIGH";
