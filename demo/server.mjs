@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  SAB_POLICY_VERSION,
   evaluateProposal,
   isExecutionAuthorized,
   proposalBinding,
@@ -25,6 +26,7 @@ const BASE_HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "cross-origin-resource-policy": "same-origin",
   "content-security-policy":
     "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
@@ -47,7 +49,42 @@ function json(res, status, body) {
   res.end(payload);
 }
 
+function assertApiRequestBoundary(req) {
+  const contentType = String(req.headers["content-type"] ?? "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== "application/json") {
+    throw new HttpError(415, "application_json_required");
+  }
+
+  if (req.headers["sec-fetch-site"] === "cross-site") {
+    throw new HttpError(403, "cross_site_request_blocked");
+  }
+
+  const origin = req.headers.origin;
+  const requestHost = req.headers.host;
+  if (typeof origin === "string" && typeof requestHost === "string") {
+    try {
+      const originUrl = new URL(origin);
+      if (originUrl.host !== requestHost) {
+        throw new HttpError(403, "origin_mismatch");
+      }
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(403, "invalid_origin");
+    }
+  }
+}
+
 async function readJson(req) {
+  assertApiRequestBoundary(req);
+
+  const declaredLength = Number(req.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    throw new HttpError(413, "request_too_large");
+  }
+
   const chunks = [];
   let totalBytes = 0;
 
@@ -137,6 +174,7 @@ const server = createServer(async (req, res) => {
       json(res, 200, {
         ok: true,
         service: "sovereign-assurance-boundary-demo",
+        policyVersion: SAB_POLICY_VERSION,
         executionAdapterConnected: false,
         nodeAlphaIdentityVerified: false,
       });
@@ -162,26 +200,30 @@ const server = createServer(async (req, res) => {
 
       const validationErrors = validateProposal(proposal);
       if (validationErrors.length > 0) {
-        record("INVALID_PROPOSAL_BLOCKED", { reasons: validationErrors.slice(0, 4) });
+        record("INVALID_PROPOSAL_BLOCKED", {
+          policyVersion: SAB_POLICY_VERSION,
+          reasons: validationErrors.slice(0, 4),
+        });
         json(res, 400, { error: "invalid_proposal", reasons: validationErrors.slice(0, 4) });
         return;
       }
 
-      const decision = evaluateProposal(proposal);
+      const result = evaluateProposal(proposal);
       const entry = record("SAB_EVALUATION", {
         proposalId: proposal.id,
-        type: proposal.type,
-        target: proposal.target,
-        route: decision.route,
-        consequence: decision.consequence,
-        reasons: decision.reasons,
+        actionType: proposal.type,
+        route: result.route,
+        consequence: result.consequence,
+        reasons: result.reasons,
+        policyVersion: result.policyVersion,
       });
 
-      if (decision.requiresApproval) {
+      if (result.requiresApproval) {
         const expiresAtMs = Date.now() + APPROVAL_WINDOW_MS;
         pending.set(proposal.id, {
           proposal,
           binding: proposalBinding(proposal),
+          policyVersion: result.policyVersion,
           expiresAtMs,
         });
         prunePending();
@@ -189,8 +231,8 @@ const server = createServer(async (req, res) => {
 
       json(res, 200, {
         proposal,
-        decision,
-        approvalWindowSeconds: decision.requiresApproval ? APPROVAL_WINDOW_MS / 1000 : 0,
+        decision: result,
+        approvalWindowSeconds: result.requiresApproval ? APPROVAL_WINDOW_MS / 1000 : 0,
         audit: entry,
       });
       return;
@@ -209,6 +251,12 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      if (pendingEntry.policyVersion !== SAB_POLICY_VERSION) {
+        pending.delete(proposalId);
+        json(res, 409, { error: "policy_version_changed_re_evaluation_required" });
+        return;
+      }
+
       const issuedAt = new Date();
       const approval = {
         proposalId,
@@ -217,6 +265,7 @@ const server = createServer(async (req, res) => {
         approvedBy: "demo-operator-unverified",
         issuedAt: issuedAt.toISOString(),
         expiresAt: new Date(issuedAt.getTime() + APPROVAL_WINDOW_MS).toISOString(),
+        policyVersion: SAB_POLICY_VERSION,
       };
 
       const authorized = isExecutionAuthorized(pendingEntry.proposal, approval, issuedAt);
@@ -225,14 +274,15 @@ const server = createServer(async (req, res) => {
       const entry = record(authorized ? "SANDBOX_AUTHORIZATION_GRANTED" : "EXECUTION_BLOCKED", {
         proposalId,
         actionType: pendingEntry.proposal.type,
-        target: pendingEntry.proposal.target,
         authorized,
+        policyVersion: SAB_POLICY_VERSION,
         operatorIdentityVerified: false,
       });
 
       json(res, authorized ? 200 : 403, {
         authorized,
         status: authorized ? "AUTHORIZED_FOR_SANDBOX_DEMO_ONLY" : "BLOCKED",
+        policyVersion: SAB_POLICY_VERSION,
         identityVerified: false,
         executionAdapterConnected: false,
         audit: entry,
@@ -256,10 +306,17 @@ const server = createServer(async (req, res) => {
       pending.delete(proposalId);
       const entry = record("HUMAN_VETO", {
         proposalId,
+        actionType: pendingEntry.proposal.type,
         reason: "demo_operator_veto",
+        policyVersion: SAB_POLICY_VERSION,
         operatorIdentityVerified: false,
       });
-      json(res, 200, { rejected: true, identityVerified: false, audit: entry });
+      json(res, 200, {
+        rejected: true,
+        policyVersion: SAB_POLICY_VERSION,
+        identityVerified: false,
+        audit: entry,
+      });
       return;
     }
 
@@ -277,6 +334,18 @@ const server = createServer(async (req, res) => {
 
     console.error("demo_server_error", error);
     json(res, 500, { error: "internal_error" });
+  }
+});
+
+// Bound request resources even for a local demo. Public deployment needs stronger rate limiting.
+server.requestTimeout = 10_000;
+server.headersTimeout = 5_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 100;
+
+server.on("clientError", (_error, socket) => {
+  if (socket.writable) {
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
   }
 });
 
