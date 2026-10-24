@@ -12,19 +12,49 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const now = new Date("2026-10-25T00:00:00.000Z");
 
-const readProposal: ActionProposal = {
-  id: "read-1",
+const publicRead: ActionProposal = {
+  id: "read-public-1",
   type: "READ",
   scope: "PRODUCTION",
   target: "public.catalog",
   reversible: true,
+  dataSensitivity: "PUBLIC",
 };
 
 {
-  const decision = evaluateProposal(readProposal);
+  const decision = evaluateProposal(publicRead);
   assert(decision.route === "ALLOW", `expected ALLOW, got ${decision.route}`);
   assert(decision.consequence === "LOW", `expected LOW, got ${decision.consequence}`);
-  assert(isExecutionAuthorized(readProposal, undefined, now), "read should be authorized");
+  assert(isExecutionAuthorized(publicRead, undefined, now), "public read should be authorized");
+}
+
+const internalRead: ActionProposal = {
+  ...publicRead,
+  id: "read-internal-1",
+  target: "internal.metrics",
+  dataSensitivity: "INTERNAL",
+};
+
+{
+  const decision = evaluateProposal(internalRead);
+  assert(decision.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${decision.route}`);
+  assert(decision.consequence === "MEDIUM", `expected MEDIUM, got ${decision.consequence}`);
+}
+
+const sensitiveRead: ActionProposal = {
+  ...publicRead,
+  id: "read-sensitive-1",
+  target: "hr.payroll",
+  dataSensitivity: "SENSITIVE",
+};
+
+{
+  const decision = evaluateProposal(sensitiveRead);
+  assert(
+    decision.route === "REQUIRE_HUMAN_APPROVAL",
+    `sensitive read should require approval, got ${decision.route}`,
+  );
+  assert(!isExecutionAuthorized(sensitiveRead, undefined, now), "sensitive read must stop at gate");
 }
 
 const sandboxWrite: ActionProposal = {
@@ -33,6 +63,7 @@ const sandboxWrite: ActionProposal = {
   scope: "SANDBOX",
   target: "demo-records",
   reversible: true,
+  dataSensitivity: "INTERNAL",
   affectedRecords: 5,
 };
 
@@ -41,7 +72,21 @@ const sandboxWrite: ActionProposal = {
   assert(decision.route === "ALLOW_WITH_LOG", `expected ALLOW_WITH_LOG, got ${decision.route}`);
   assert(
     isExecutionAuthorized(sandboxWrite, undefined, now),
-    "bounded sandbox write should be authorized",
+    "bounded internal sandbox write should be authorized",
+  );
+}
+
+const sensitiveSandboxWrite: ActionProposal = {
+  ...sandboxWrite,
+  id: "write-sensitive-1",
+  dataSensitivity: "SENSITIVE",
+};
+
+{
+  const decision = evaluateProposal(sensitiveSandboxWrite);
+  assert(
+    decision.route === "REQUIRE_HUMAN_APPROVAL",
+    "sensitive sandbox data should not inherit low-risk auto-admission",
   );
 }
 
@@ -51,6 +96,7 @@ const destructiveProposal: ActionProposal = {
   scope: "PRODUCTION",
   target: "customers:inactive",
   reversible: false,
+  dataSensitivity: "SENSITIVE",
   affectedRecords: 47,
 };
 
@@ -98,6 +144,15 @@ const destructiveProposal: ActionProposal = {
     "approval must fail when scope changes",
   );
 
+  const sensitivityDrift: ActionProposal = {
+    ...destructiveProposal,
+    dataSensitivity: "SECRET",
+  };
+  assert(
+    !isExecutionAuthorized(sensitivityDrift, approval, now),
+    "approval must fail when data sensitivity changes",
+  );
+
   const expiredApproval: ApprovalRecord = {
     ...approval,
     issuedAt: "2026-10-24T23:40:00.000Z",
@@ -126,6 +181,7 @@ const destructiveProposal: ActionProposal = {
     scope: "EXTERNAL",
     target: "unknown-webhook",
     reversible: false,
+    dataSensitivity: "SECRET",
     containsSecrets: true,
   };
 
@@ -154,6 +210,7 @@ const destructiveProposal: ActionProposal = {
     scope: "PRODUCTION",
     target: "customers",
     reversible: "yes",
+    dataSensitivity: "TOTALLY_FINE",
     affectedRecords: -10,
   };
 
