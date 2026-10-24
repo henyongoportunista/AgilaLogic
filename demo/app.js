@@ -1,34 +1,37 @@
 const scenarios = [
   {
     name: "Read public catalog",
-    note: "Read-only query over non-sensitive demo data.",
+    note: "Read-only query over public demo data.",
     proposal: {
       type: "READ",
       scope: "PRODUCTION",
       target: "public.catalog",
       reversible: true,
+      dataSensitivity: "PUBLIC",
       affectedRecords: 250,
     },
   },
   {
     name: "Update 47 records",
-    note: "High-blast-radius production mutation.",
+    note: "High-blast-radius production mutation over sensitive data.",
     proposal: {
       type: "WRITE",
       scope: "PRODUCTION",
       target: "crm.customer_status",
       reversible: true,
+      dataSensitivity: "SENSITIVE",
       affectedRecords: 47,
     },
   },
   {
     name: "Sandbox draft",
-    note: "Bounded reversible write inside sandbox.",
+    note: "Bounded reversible write over internal sandbox data.",
     proposal: {
       type: "WRITE",
       scope: "SANDBOX",
       target: "sandbox.message_draft",
       reversible: true,
+      dataSensitivity: "INTERNAL",
       affectedRecords: 1,
     },
   },
@@ -40,6 +43,7 @@ const scenarios = [
       scope: "EXTERNAL",
       target: "external.webhook",
       reversible: false,
+      dataSensitivity: "SECRET",
       affectedRecords: 1,
       containsSecrets: true,
     },
@@ -95,6 +99,7 @@ function renderProposal(proposal) {
   $("#pType").textContent = proposal.type;
   $("#pScope").textContent = proposal.scope;
   $("#pTarget").textContent = proposal.target;
+  $("#pSensitivity").textContent = proposal.dataSensitivity;
   $("#pReversible").textContent = proposal.reversible ? "YES" : "NO";
   $("#pBlast").textContent = `${proposal.affectedRecords ?? 0} record(s)`;
 }
