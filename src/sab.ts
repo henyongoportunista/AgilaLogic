@@ -9,6 +9,7 @@ export type ActionType =
   | "PERMISSION_CHANGE";
 
 export type ActionScope = "LOCAL" | "SANDBOX" | "STAGING" | "PRODUCTION" | "EXTERNAL";
+export type DataSensitivity = "PUBLIC" | "INTERNAL" | "SENSITIVE" | "SECRET";
 
 export type ConsequenceClass = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
@@ -24,6 +25,7 @@ export interface ActionProposal {
   scope: ActionScope;
   target: string;
   reversible: boolean;
+  dataSensitivity: DataSensitivity;
   affectedRecords?: number;
   estimatedCost?: number;
   containsSecrets?: boolean;
@@ -64,12 +66,20 @@ const ACTION_SCOPES = new Set<ActionScope>([
   "EXTERNAL",
 ]);
 
+const DATA_SENSITIVITIES = new Set<DataSensitivity>([
+  "PUBLIC",
+  "INTERNAL",
+  "SENSITIVE",
+  "SECRET",
+]);
+
 const PROPOSAL_FIELDS = new Set([
   "id",
   "type",
   "scope",
   "target",
   "reversible",
+  "dataSensitivity",
   "affectedRecords",
   "estimatedCost",
   "containsSecrets",
@@ -117,6 +127,9 @@ export function validateProposal(input: unknown): string[] {
   if (!ACTION_SCOPES.has(input.scope as ActionScope)) errors.push("invalid_action_scope");
   if (!validString(input.target, 500)) errors.push("invalid_target");
   if (typeof input.reversible !== "boolean") errors.push("invalid_reversible");
+  if (!DATA_SENSITIVITIES.has(input.dataSensitivity as DataSensitivity)) {
+    errors.push("invalid_data_sensitivity");
+  }
 
   if (!validOptionalNonNegativeNumber(input.affectedRecords, 1_000_000_000)) {
     errors.push("invalid_affected_records");
@@ -159,8 +172,19 @@ export function proposalBinding(proposal: ActionProposal): string {
 }
 
 function consequenceOf(proposal: ActionProposal): ConsequenceClass {
-  if (proposal.type === "READ") return "LOW";
-  if (proposal.containsSecrets && proposal.scope === "EXTERNAL") return "CRITICAL";
+  if (proposal.type === "READ") {
+    if (proposal.dataSensitivity === "PUBLIC") return "LOW";
+    if (proposal.dataSensitivity === "INTERNAL") return "MEDIUM";
+    if (proposal.dataSensitivity === "SENSITIVE") return "HIGH";
+    return "CRITICAL";
+  }
+
+  if (
+    proposal.scope === "EXTERNAL" &&
+    (proposal.containsSecrets || proposal.dataSensitivity === "SECRET")
+  ) {
+    return "CRITICAL";
+  }
   if (proposal.type === "PERMISSION_CHANGE") return "CRITICAL";
   if (proposal.type === "PAYMENT" || proposal.type === "DELETE") return "HIGH";
   if (proposal.type === "PRODUCTION_DEPLOY" || proposal.type === "EXTERNAL_MESSAGE") return "HIGH";
@@ -189,7 +213,10 @@ export function evaluateProposal(input: unknown): SabDecision {
   const consequence = consequenceOf(proposal);
   const reasons: string[] = [];
 
-  if (proposal.containsSecrets && proposal.scope === "EXTERNAL") {
+  if (
+    proposal.scope === "EXTERNAL" &&
+    (proposal.containsSecrets || proposal.dataSensitivity === "SECRET")
+  ) {
     return {
       route: "DENY",
       consequence: "CRITICAL",
@@ -199,11 +226,29 @@ export function evaluateProposal(input: unknown): SabDecision {
   }
 
   if (proposal.type === "READ") {
+    if (proposal.dataSensitivity === "PUBLIC") {
+      return {
+        route: "ALLOW",
+        consequence,
+        reasons: ["public_read_only"],
+        requiresApproval: false,
+      };
+    }
+
+    if (proposal.dataSensitivity === "INTERNAL") {
+      return {
+        route: "ALLOW_WITH_LOG",
+        consequence,
+        reasons: ["internal_read_logged"],
+        requiresApproval: false,
+      };
+    }
+
     return {
-      route: "ALLOW",
+      route: "REQUIRE_HUMAN_APPROVAL",
       consequence,
-      reasons: ["read_only"],
-      requiresApproval: false,
+      reasons: ["sensitive_read_requires_authority"],
+      requiresApproval: true,
     };
   }
 
@@ -211,7 +256,8 @@ export function evaluateProposal(input: unknown): SabDecision {
     proposal.type === "WRITE" &&
     proposal.scope === "SANDBOX" &&
     proposal.reversible &&
-    (proposal.affectedRecords ?? 0) < 25
+    (proposal.affectedRecords ?? 0) < 25 &&
+    (proposal.dataSensitivity === "PUBLIC" || proposal.dataSensitivity === "INTERNAL")
   ) {
     return {
       route: "ALLOW_WITH_LOG",
@@ -227,6 +273,9 @@ export function evaluateProposal(input: unknown): SabDecision {
   if (!proposal.reversible) reasons.push("irreversible_or_hard_to_reverse");
   if ((proposal.affectedRecords ?? 0) >= 25) reasons.push("large_blast_radius");
   if ((proposal.estimatedCost ?? 0) > 0) reasons.push("financial_consequence");
+  if (proposal.dataSensitivity === "SENSITIVE" || proposal.dataSensitivity === "SECRET") {
+    reasons.push("sensitive_data");
+  }
 
   return {
     route: "REQUIRE_HUMAN_APPROVAL",
