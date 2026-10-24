@@ -1,7 +1,7 @@
 const scenarios = [
   {
     name: "Read public catalog",
-    note: "Read-only query over public demo data.",
+    note: "Bounded read-only query over public demo data.",
     proposal: {
       type: "READ",
       scope: "PRODUCTION",
@@ -9,6 +9,8 @@ const scenarios = [
       reversible: true,
       dataSensitivity: "PUBLIC",
       affectedRecords: 250,
+      estimatedCost: 0,
+      containsSecrets: false,
     },
   },
   {
@@ -21,11 +23,13 @@ const scenarios = [
       reversible: true,
       dataSensitivity: "SENSITIVE",
       affectedRecords: 47,
+      estimatedCost: 0,
+      containsSecrets: false,
     },
   },
   {
     name: "Sandbox draft",
-    note: "Bounded reversible write over internal sandbox data.",
+    note: "Fully bounded reversible write over internal sandbox data.",
     proposal: {
       type: "WRITE",
       scope: "SANDBOX",
@@ -33,6 +37,8 @@ const scenarios = [
       reversible: true,
       dataSensitivity: "INTERNAL",
       affectedRecords: 1,
+      estimatedCost: 0,
+      containsSecrets: false,
     },
   },
   {
@@ -45,6 +51,7 @@ const scenarios = [
       reversible: false,
       dataSensitivity: "SECRET",
       affectedRecords: 1,
+      estimatedCost: 0,
       containsSecrets: true,
     },
   },
@@ -61,6 +68,7 @@ const routeBadge = $("#routeBadge");
 
 let activeScenario = scenarios[1];
 let activeDecision = null;
+let evaluationGeneration = 0;
 
 function setReasons(reasons) {
   const list = $("#reasons");
@@ -72,11 +80,20 @@ function setReasons(reasons) {
   }
 }
 
+function setScenarioButtonsDisabled(disabled) {
+  for (const button of scenarioGrid.querySelectorAll("button")) {
+    button.disabled = disabled;
+  }
+}
+
 function renderScenarios() {
   scenarioGrid.replaceChildren();
   scenarios.forEach((scenario) => {
     const button = document.createElement("button");
-    button.className = `scenario-btn${scenario === activeScenario ? " selected" : ""}`;
+    button.type = "button";
+    const selected = scenario === activeScenario;
+    button.className = `scenario-btn${selected ? " selected" : ""}`;
+    button.setAttribute("aria-pressed", String(selected));
 
     const title = document.createElement("strong");
     title.textContent = scenario.name;
@@ -85,6 +102,7 @@ function renderScenarios() {
     button.append(title, note);
 
     button.addEventListener("click", () => {
+      evaluationGeneration += 1;
       activeScenario = scenario;
       activeDecision = null;
       renderScenarios();
@@ -101,13 +119,16 @@ function renderProposal(proposal) {
   $("#pTarget").textContent = proposal.target;
   $("#pSensitivity").textContent = proposal.dataSensitivity;
   $("#pReversible").textContent = proposal.reversible ? "YES" : "NO";
-  $("#pBlast").textContent = `${proposal.affectedRecords ?? 0} record(s)`;
+  $("#pBlast").textContent = proposal.affectedRecords === undefined
+    ? "UNKNOWN"
+    : `${proposal.affectedRecords} record(s)`;
 }
 
 function resetDecision() {
   routeBadge.textContent = "NOT EVALUATED";
   routeBadge.className = "decision-badge neutral";
   $("#consequence").textContent = "—";
+  $("#policyVersion").textContent = "—";
   setReasons(["Run a scenario to inspect deterministic routing."]);
   humanGate.hidden = true;
   approveBtn.disabled = false;
@@ -137,6 +158,7 @@ function renderDecision(decision) {
         : "allow"
   }`;
   $("#consequence").textContent = decision.consequence;
+  $("#policyVersion").textContent = decision.policyVersion ?? "UNKNOWN";
   setReasons(decision.reasons);
   humanGate.hidden = !decision.requiresApproval;
 
@@ -153,22 +175,33 @@ function renderDecision(decision) {
 }
 
 async function evaluate() {
+  const generation = ++evaluationGeneration;
+  const proposalSnapshot = structuredClone(activeScenario.proposal);
+
   evaluateBtn.disabled = true;
+  setScenarioButtonsDisabled(true);
   evaluateBtn.textContent = "Evaluating…";
   activeDecision = null;
   humanGate.hidden = true;
 
   try {
-    activeDecision = await post("/api/evaluate", { proposal: activeScenario.proposal });
-    renderProposal(activeDecision.proposal);
-    renderDecision(activeDecision.decision);
+    const result = await post("/api/evaluate", { proposal: proposalSnapshot });
+    if (generation !== evaluationGeneration) return;
+
+    activeDecision = result;
+    renderProposal(result.proposal);
+    renderDecision(result.decision);
     await refreshAudit();
   } catch (error) {
+    if (generation !== evaluationGeneration) return;
     $("#executionStatus").textContent = "DEMO ERROR";
     $("#executionNote").textContent = error instanceof Error ? error.message : String(error);
   } finally {
-    evaluateBtn.disabled = false;
-    evaluateBtn.textContent = "Evaluate through SAB";
+    if (generation === evaluationGeneration) {
+      evaluateBtn.disabled = false;
+      setScenarioButtonsDisabled(false);
+      evaluateBtn.textContent = "Evaluate through SAB";
+    }
   }
 }
 
@@ -181,7 +214,7 @@ async function approve() {
     const result = await post("/api/authorize", { proposalId: activeDecision.proposal.id });
     $("#executionStatus").textContent = result.status;
     $("#executionNote").textContent = result.authorized
-      ? "The server re-evaluated the stored proposal and accepted a one-time demo authorization. No external adapter is connected and no identity claim is made."
+      ? "The server re-evaluated the stored proposal under the same policy version and accepted a one-time demo authorization. No external adapter is connected and no identity claim is made."
       : "Policy or approval-state checks prevented authorization.";
     humanGate.hidden = true;
     activeDecision = null;
@@ -234,6 +267,7 @@ async function refreshAudit() {
     const summary = [
       detail.proposalId,
       detail.route,
+      detail.policyVersion ? `policy:${detail.policyVersion}` : null,
       detail.authorized === false ? "blocked" : null,
     ]
       .filter(Boolean)
