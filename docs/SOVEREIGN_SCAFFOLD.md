@@ -1,6 +1,6 @@
 # Sovereign Scaffold MVP
 
-**Status:** Working prototype architecture
+**Status:** Working prototype architecture + local interactive demo
 
 Sovereign Scaffold is the bounded-authority execution layer for AgilaLogic. Its core principle is simple:
 
@@ -34,6 +34,40 @@ The first implementation in `src/sab.ts` performs consequence-aware routing usin
 - attempted secret exfiltration is denied rather than made approval-bypassable,
 - approvals are bound to one exact proposal ID, action type, and target.
 
+## Interactive portfolio demo
+
+The repository includes a zero-framework local demo under `demo/`.
+
+Run:
+
+```bash
+npm install
+npm run demo
+```
+
+Then open:
+
+```text
+http://localhost:4173
+```
+
+The demo exposes a thin local HTTP API backed by the real compiled `src/sab.ts` implementation:
+
+- `GET /api/health`
+- `POST /api/evaluate`
+- `POST /api/authorize`
+- `POST /api/reject`
+- `GET /api/audit`
+
+The browser UI demonstrates four policy paths:
+
+1. read-only production access,
+2. a large production write requiring Node Alpha approval,
+3. a bounded reversible sandbox write,
+4. attempted external secret exfiltration resulting in a hard deny.
+
+Approvals are short-lived and bound to the exact proposal ID, action type, and target. The demo intentionally contains **no real external execution adapter**, so approval demonstrates authorization without mutating production systems.
+
 ## What the SAB does not claim yet
 
 This prototype does **not** yet claim:
@@ -58,35 +92,32 @@ OBSERVE → FILTER → CALCULATE → DECIDE → ACT → VERIFY → STORE → REC
 
 Sovereign Scaffold strengthens the transition from **DECIDE** to **ACT** by introducing an explicit admission layer between a proposed action and execution.
 
-## Demo target
-
-A minimal portfolio demo should allow a visitor to submit a proposed action such as:
+## Current MVP slice
 
 ```text
-Delete 47 inactive customer records.
+Scenario / Node Beta proposal
+          ↓
+     SAB evaluation
+          ↓
+ ┌────────┼───────────────┐
+ALLOW   HUMAN GATE       DENY
+ │         │               │
+ │      approve/veto       │
+ └─────────┴───────┬───────┘
+                   ↓
+             audit ledger
 ```
 
-The interface should render the resulting SAB decision:
-
-```text
-Action: DELETE
-Scope: PRODUCTION
-Records affected: 47
-Reversible: NO
-Consequence: HIGH
-Route: REQUIRE_HUMAN_APPROVAL
-```
-
-The user may then approve or reject the exact action. Any drift in target, action type, or proposal identity invalidates the approval.
+This is intentionally narrow. It proves the central control boundary before adding external agent providers or production mutation adapters.
 
 ## Next implementation steps
 
-1. Add a thin API endpoint around `evaluateProposal()`.
-2. Add an append-only audit event schema in Supabase.
-3. Add an approval record table with expiration and exact action binding.
-4. Add one real execution adapter in sandbox mode.
-5. Add a simple portfolio UI that visualizes Node Beta → SAB → Node Alpha.
-6. Add CI checks for SAB tests and policy regressions.
+1. Persist SAB audit events and approval records in Supabase.
+2. Add one strictly sandboxed execution adapter.
+3. Connect one real model provider as Node Beta proposal generation.
+4. Add authenticated Node Alpha identity and signed approvals.
+5. Deploy the portfolio demo to a public environment.
+6. Add policy-regression cases as new action classes are introduced.
 
 ## Design rule
 
