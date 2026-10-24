@@ -121,7 +121,7 @@ export function validateProposal(input: unknown): string[] {
   if (!validOptionalNonNegativeNumber(input.affectedRecords, 1_000_000_000)) {
     errors.push("invalid_affected_records");
   } else if (
-    input.affectedRecords !== undefined &&
+    typeof input.affectedRecords === "number" &&
     !Number.isInteger(input.affectedRecords)
   ) {
     errors.push("affected_records_must_be_integer");
@@ -155,7 +155,7 @@ function canonicalize(value: unknown): unknown {
  * A later production phase may hash/sign this canonical representation.
  */
 export function proposalBinding(proposal: ActionProposal): string {
-  return JSON.stringify(canonicalize(proposal));
+  return JSON.stringify(canonicalize(proposal)) as string;
 }
 
 function consequenceOf(proposal: ActionProposal): ConsequenceClass {
