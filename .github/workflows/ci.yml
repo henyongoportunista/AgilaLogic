@@ -26,3 +26,30 @@ jobs:
 
       - name: Typecheck and test
         run: npm run ci
+
+      - name: Smoke test Sovereign Scaffold demo API
+        run: |
+          npm run demo > /tmp/sovereign-scaffold-demo.log 2>&1 &
+          DEMO_PID=$!
+          trap 'kill $DEMO_PID 2>/dev/null || true' EXIT
+
+          READY=0
+          for i in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:4173/api/health > /tmp/health.json; then
+              READY=1
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            cat /tmp/sovereign-scaffold-demo.log
+            exit 1
+          fi
+
+          curl --fail --silent \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"id":"ci-write-47","type":"WRITE","scope":"PRODUCTION","target":"crm.customer_status","reversible":true,"affectedRecords":47}}' \
+            http://127.0.0.1:4173/api/evaluate \
+            | grep -q '"route": "REQUIRE_HUMAN_APPROVAL"'
