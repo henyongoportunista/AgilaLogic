@@ -33,6 +33,47 @@ jobs:
       - name: Dependency audit
         run: npm audit --audit-level=high
 
+      - name: Portfolio accessibility regression contract
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const html = fs.readFileSync('demo/index.html', 'utf8');
+          const css = fs.readFileSync('demo/styles.css', 'utf8');
+          const app = fs.readFileSync('demo/app.js', 'utf8');
+
+          for (const required of ['role="status"', 'aria-live="polite"', 'aria-atomic="true"']) {
+            if (!html.includes(required)) throw new Error(`missing accessibility contract: ${required}`);
+          }
+          for (const required of ['aria-pressed', 'evaluationGeneration']) {
+            if (!app.includes(required)) throw new Error(`missing UI state guard: ${required}`);
+          }
+          for (const required of ['button:focus-visible', 'prefers-reduced-motion']) {
+            if (!css.includes(required)) throw new Error(`missing CSS accessibility contract: ${required}`);
+          }
+
+          function channel(value) {
+            const x = value / 255;
+            return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+          }
+          function luminance(hex) {
+            const value = hex.replace('#', '');
+            const [r, g, b] = [0, 2, 4].map((i) => channel(parseInt(value.slice(i, i + 2), 16)));
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          }
+          function ratio(a, b) {
+            const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+            return (hi + 0.05) / (lo + 0.05);
+          }
+
+          const footerColor = css.match(/footer\s*\{[^}]*color:\s*(#[0-9a-fA-F]{6})/s)?.[1];
+          const rootBackground = css.match(/:root\s*\{[^}]*background:\s*(#[0-9a-fA-F]{6})/s)?.[1];
+          if (!footerColor || !rootBackground) throw new Error('unable to resolve footer contrast colors');
+          if (ratio(footerColor, rootBackground) < 4.5) {
+            throw new Error(`footer contrast below WCAG AA: ${ratio(footerColor, rootBackground).toFixed(2)}:1`);
+          }
+          NODE
+
       - name: Adversarial smoke test Sovereign Scaffold demo API
         shell: bash
         run: |
@@ -86,11 +127,32 @@ jobs:
             http://127.0.0.1:4173/api/evaluate)
           test "$CROSS_SITE_CODE" = "403"
 
+          ORIGIN_MISMATCH_CODE=$(curl --silent --show-error \
+            -o /tmp/origin-mismatch.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -H 'origin: https://evil.example' \
+            -d '{"proposal":{}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$ORIGIN_MISMATCH_CODE" = "403"
+
+          node -e 'process.stdout.write(JSON.stringify({proposal:{padding:"x".repeat(70000)}}))' > /tmp/oversized.json
+          OVERSIZED_CODE=$(curl --silent --show-error \
+            -o /tmp/oversized-response.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/oversized.json \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$OVERSIZED_CODE" = "413"
+
           EVAL_CODE=$(curl --silent --show-error \
             -o /tmp/eval.json \
             -w '%{http_code}' \
             -X POST \
             -H 'content-type: application/json' \
+            -H 'origin: http://127.0.0.1:4173' \
             -d '{"proposal":{"type":"WRITE","scope":"PRODUCTION","target":"crm.customer_status","reversible":true,"dataSensitivity":"SENSITIVE","affectedRecords":47,"estimatedCost":0,"containsSecrets":false}}' \
             http://127.0.0.1:4173/api/evaluate)
           test "$EVAL_CODE" = "200"
@@ -176,6 +238,19 @@ jobs:
             http://127.0.0.1:4173/api/evaluate)
           test "$MALFORMED_CODE" = "400"
 
+          ATTACKER_KEY_CODE=$(curl --silent --show-error \
+            -o /tmp/attacker-key.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"READ","scope":"PRODUCTION","target":"public.catalog","reversible":true,"dataSensitivity":"PUBLIC","affectedRecords":1,"APIKEY-supersecret-value":true}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$ATTACKER_KEY_CODE" = "400"
+          if grep -q 'supersecret' /tmp/attacker-key.json; then
+            echo 'attacker-controlled field name leaked into validation response'
+            exit 1
+          fi
+
           CONTRADICTION_CODE=$(curl --silent --show-error \
             -o /tmp/contradiction.json \
             -w '%{http_code}' \
@@ -202,5 +277,9 @@ jobs:
           curl --fail --silent http://127.0.0.1:4173/api/audit > /tmp/audit.json
           if grep -q 'crm.customer_status' /tmp/audit.json; then
             echo 'raw target leaked into audit ledger'
+            exit 1
+          fi
+          if grep -q 'supersecret' /tmp/audit.json; then
+            echo 'attacker-controlled validation text leaked into audit ledger'
             exit 1
           fi
