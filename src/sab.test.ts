@@ -20,6 +20,7 @@ const readProposal: ActionProposal = {
 {
   const decision = evaluateProposal(readProposal);
   assert(decision.route === "ALLOW", `expected ALLOW, got ${decision.route}`);
+  assert(decision.consequence === "LOW", `expected LOW, got ${decision.consequence}`);
   assert(isExecutionAuthorized(readProposal, decision), "read should be authorized");
 }
 
