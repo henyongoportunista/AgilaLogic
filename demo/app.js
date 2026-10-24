@@ -1,12 +1,11 @@
 const scenarios = [
   {
-    name: "Read customer list",
-    note: "Read-only query, no state mutation.",
+    name: "Read public catalog",
+    note: "Read-only query over non-sensitive demo data.",
     proposal: {
-      id: "demo-read-customers",
       type: "READ",
       scope: "PRODUCTION",
-      target: "crm.customers",
+      target: "public.catalog",
       reversible: true,
       affectedRecords: 250,
     },
@@ -15,7 +14,6 @@ const scenarios = [
     name: "Update 47 records",
     note: "High-blast-radius production mutation.",
     proposal: {
-      id: "demo-update-47",
       type: "WRITE",
       scope: "PRODUCTION",
       target: "crm.customer_status",
@@ -27,7 +25,6 @@ const scenarios = [
     name: "Sandbox draft",
     note: "Bounded reversible write inside sandbox.",
     proposal: {
-      id: "demo-sandbox-draft",
       type: "WRITE",
       scope: "SANDBOX",
       target: "sandbox.message_draft",
@@ -39,7 +36,6 @@ const scenarios = [
     name: "External secret leak",
     note: "Secret-bearing output crossing an external boundary.",
     proposal: {
-      id: "demo-secret-exfiltration",
       type: "EXTERNAL_MESSAGE",
       scope: "EXTERNAL",
       target: "external.webhook",
@@ -62,19 +58,28 @@ const routeBadge = $("#routeBadge");
 let activeScenario = scenarios[1];
 let activeDecision = null;
 
-function proposalWithNonce(proposal) {
-  return {
-    ...proposal,
-    id: `${proposal.id}-${Date.now()}`,
-  };
+function setReasons(reasons) {
+  const list = $("#reasons");
+  list.replaceChildren();
+  for (const reason of reasons) {
+    const item = document.createElement("li");
+    item.textContent = String(reason);
+    list.appendChild(item);
+  }
 }
 
 function renderScenarios() {
-  scenarioGrid.innerHTML = "";
+  scenarioGrid.replaceChildren();
   scenarios.forEach((scenario) => {
     const button = document.createElement("button");
     button.className = `scenario-btn${scenario === activeScenario ? " selected" : ""}`;
-    button.innerHTML = `<strong>${scenario.name}</strong><small>${scenario.note}</small>`;
+
+    const title = document.createElement("strong");
+    title.textContent = scenario.name;
+    const note = document.createElement("small");
+    note.textContent = scenario.note;
+    button.append(title, note);
+
     button.addEventListener("click", () => {
       activeScenario = scenario;
       activeDecision = null;
@@ -98,8 +103,10 @@ function resetDecision() {
   routeBadge.textContent = "NOT EVALUATED";
   routeBadge.className = "decision-badge neutral";
   $("#consequence").textContent = "—";
-  $("#reasons").innerHTML = "<li>Run a scenario to inspect deterministic routing.</li>";
+  setReasons(["Run a scenario to inspect deterministic routing."]);
   humanGate.hidden = true;
+  approveBtn.disabled = false;
+  rejectBtn.disabled = false;
   $("#executionStatus").textContent = "WAITING";
   $("#executionNote").textContent = "No real external side effect is executed in this demo.";
 }
@@ -125,27 +132,29 @@ function renderDecision(decision) {
         : "allow"
   }`;
   $("#consequence").textContent = decision.consequence;
-  $("#reasons").innerHTML = decision.reasons.map((reason) => `<li>${reason}</li>`).join("");
+  setReasons(decision.reasons);
   humanGate.hidden = !decision.requiresApproval;
 
   if (decision.route === "ALLOW" || decision.route === "ALLOW_WITH_LOG") {
     $("#executionStatus").textContent = "ADMITTED BY POLICY";
-    $("#executionNote").textContent = "The proposal is authorized only for this sandbox demonstration; no external adapter is connected.";
+    $("#executionNote").textContent = "Authorized only inside this demonstration. No external execution adapter is connected.";
   } else if (decision.route === "DENY") {
     $("#executionStatus").textContent = "HARD BLOCK";
-    $("#executionNote").textContent = "This proposal cannot be rescued by ordinary human approval in the demo policy.";
+    $("#executionNote").textContent = "This proposal cannot be rescued by ordinary demo-operator approval.";
   } else {
-    $("#executionStatus").textContent = "AWAITING NODE ALPHA";
-    $("#executionNote").textContent = "The AI proposal stops here until an exact human authorization is presented.";
+    $("#executionStatus").textContent = "AWAITING DEMO OPERATOR";
+    $("#executionNote").textContent = "The proposal stops here. This button simulates the Node Alpha role; identity authentication is intentionally not implemented yet.";
   }
 }
 
 async function evaluate() {
   evaluateBtn.disabled = true;
   evaluateBtn.textContent = "Evaluating…";
+  activeDecision = null;
+  humanGate.hidden = true;
+
   try {
-    const proposal = proposalWithNonce(activeScenario.proposal);
-    activeDecision = await post("/api/evaluate", { proposal });
+    activeDecision = await post("/api/evaluate", { proposal: activeScenario.proposal });
     renderProposal(activeDecision.proposal);
     renderDecision(activeDecision.decision);
     await refreshAudit();
@@ -159,64 +168,93 @@ async function evaluate() {
 }
 
 async function approve() {
-  if (!activeDecision) return;
-  const { proposal, decision } = activeDecision;
-  const approval = {
-    proposalId: proposal.id,
-    actionType: proposal.type,
-    target: proposal.target,
-    approved: true,
-    approvedBy: "Node Alpha / Demo Operator",
-    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
-  };
+  if (!activeDecision?.proposal?.id) return;
+  approveBtn.disabled = true;
+  rejectBtn.disabled = true;
 
-  const result = await post("/api/authorize", { proposal, decision, approval });
-  $("#executionStatus").textContent = result.status;
-  $("#executionNote").textContent = result.authorized
-    ? "Exact approval matched. The action is authorized for sandbox execution; this demo intentionally has no real external adapter."
-    : "Approval mismatch or policy block prevented authorization.";
-  humanGate.hidden = true;
-  await refreshAudit();
+  try {
+    const result = await post("/api/authorize", { proposalId: activeDecision.proposal.id });
+    $("#executionStatus").textContent = result.status;
+    $("#executionNote").textContent = result.authorized
+      ? "The server re-evaluated the stored proposal and accepted a one-time demo authorization. No external adapter is connected and no identity claim is made."
+      : "Policy or approval-state checks prevented authorization.";
+    humanGate.hidden = true;
+    activeDecision = null;
+    await refreshAudit();
+  } catch (error) {
+    $("#executionStatus").textContent = "AUTHORIZATION BLOCKED";
+    $("#executionNote").textContent = error instanceof Error ? error.message : String(error);
+    approveBtn.disabled = false;
+    rejectBtn.disabled = false;
+  }
 }
 
 async function reject() {
-  if (!activeDecision) return;
-  await post("/api/reject", { proposal: activeDecision.proposal, reason: "node_alpha_veto" });
-  $("#executionStatus").textContent = "BLOCKED BY HUMAN VETO";
-  $("#executionNote").textContent = "Node Alpha rejected the proposed mutation. No execution authority was granted.";
-  humanGate.hidden = true;
-  await refreshAudit();
+  if (!activeDecision?.proposal?.id) return;
+  approveBtn.disabled = true;
+  rejectBtn.disabled = true;
+
+  try {
+    await post("/api/reject", { proposalId: activeDecision.proposal.id });
+    $("#executionStatus").textContent = "BLOCKED BY HUMAN VETO";
+    $("#executionNote").textContent = "The demo operator rejected the pending mutation. The pending approval state was removed.";
+    humanGate.hidden = true;
+    activeDecision = null;
+    await refreshAudit();
+  } catch (error) {
+    $("#executionStatus").textContent = "VETO ERROR";
+    $("#executionNote").textContent = error instanceof Error ? error.message : String(error);
+    approveBtn.disabled = false;
+    rejectBtn.disabled = false;
+  }
 }
 
 async function refreshAudit() {
   const response = await fetch("/api/audit", { cache: "no-store" });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const { entries } = await response.json();
   const list = $("#auditList");
+  list.replaceChildren();
 
   if (!entries?.length) {
-    list.innerHTML = '<p class="empty">No events yet.</p>';
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No events yet.";
+    list.appendChild(empty);
     return;
   }
 
-  list.innerHTML = entries.slice(0, 12).map((entry) => {
+  for (const entry of entries.slice(0, 12)) {
     const detail = entry.detail ?? {};
-    const summary = [detail.proposalId, detail.route, detail.authorized === false ? "blocked" : null]
+    const summary = [
+      detail.proposalId,
+      detail.route,
+      detail.authorized === false ? "blocked" : null,
+    ]
       .filter(Boolean)
       .join(" · ");
-    return `
-      <div class="audit-entry">
-        <time>${new Date(entry.at).toLocaleTimeString()}</time>
-        <code>${summary || entry.id}</code>
-        <strong>${entry.type.replaceAll("_", " ")}</strong>
-      </div>
-    `;
-  }).join("");
+
+    const row = document.createElement("div");
+    row.className = "audit-entry";
+
+    const time = document.createElement("time");
+    time.textContent = new Date(entry.at).toLocaleTimeString();
+
+    const code = document.createElement("code");
+    code.textContent = summary || String(entry.id ?? "event");
+
+    const type = document.createElement("strong");
+    type.textContent = String(entry.type ?? "EVENT").replaceAll("_", " ");
+
+    row.append(time, code, type);
+    list.appendChild(row);
+  }
 }
 
 evaluateBtn.addEventListener("click", evaluate);
 approveBtn.addEventListener("click", approve);
 rejectBtn.addEventListener("click", reject);
-refreshAuditBtn.addEventListener("click", refreshAudit);
+refreshAuditBtn.addEventListener("click", () => refreshAudit().catch(() => {}));
 
 renderScenarios();
 renderProposal(activeScenario.proposal);
