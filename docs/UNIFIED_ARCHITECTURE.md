@@ -1,14 +1,37 @@
 # Unified Gagamba × Agila Architecture
 
-Status: **experimental canonical design for the current integration branch**
+Status: **experimental canonical design — Round-2 recalibrated**
 
-Only the `HT → MT` strand is executable today. The other six architect→engineer pairings are routing contracts, not implemented autonomous agents.
+Only the `HT → MT` strand is executable today. The other six architect→engineer pairings remain routing contracts, not implemented autonomous agents.
 
 ## Core law
 
 > **Capability ≠ Authority. Architecture ≠ Authorization.**
 
 A role may observe, reason, design, engineer, review, or propose without gaining permission to mutate consequential external state.
+
+## Unified Golden Axiom
+
+Human canon, preserved verbatim:
+
+> **"Ignorance happens when you fail express your own thoughts clearly enough to be understood by anyone, and it only means you haven't really met yourself inside out"**
+
+The repository does **not** treat the literal psychological claim as established fact. Its calibrated engineering translation is:
+
+> **Unclear intent is unresolved state, not executable state.**
+
+Operational consequence:
+
+- objective must be explicit;
+- success criteria must be explicit;
+- strategic limits should be machine-checkable where feasible;
+- fact, inference, prediction, preference and unknown remain distinct;
+- the engineer may not silently invent missing intent;
+- unresolved interpretation returns `RFI_REQUIRED`;
+- ambiguity outranks passive `NO_ACTION`, except for an explicit hard rejection;
+- clarity is structural and testable, not a function of verbosity or confidence.
+
+See `docs/GOLDEN_AXIOM_ROUND2.md` for the full red-team analysis.
 
 ## Two planes
 
@@ -85,24 +108,24 @@ The current prototype stops before a real trusted adapter or real external execu
 | MM — Metikulosong Matakaw | UM — Usiserong Matakaw | decide what information is worth consuming → extract useful intelligence |
 | EI — Edukadong Inggitero | IW — Inggiterong Wais | study external blueprints → adapt transferable mechanisms |
 
-These pairs are **routing defaults**. They are not permissions, identity, credentials, or mandatory one-to-one execution dependencies.
+These pairings are routing defaults. They are not permissions, identity, credentials, or mandatory one-to-one execution dependencies.
 
-## Dynamic invocation rule
+## Minimum-sufficient coordination
 
 Do not run all fourteen roles by default.
 
-- simple bounded task: invoke one relevant strand;
-- uncertainty/research task: invoke relevant architect + engineer roles;
-- security-sensitive task: add an independent cross-reviewer;
-- major architecture change: synthesize relevant architects first, then relevant engineers, then cross-review before any SAB proposal.
+- simple bounded task → one relevant strand;
+- uncertainty/research task → relevant architect + engineer roles;
+- security-sensitive task → add an independent cross-reviewer;
+- major architecture change → synthesize relevant architects, then relevant engineers, then cross-review before any SAB proposal.
 
 The architecture optimizes for **minimum sufficient coordination**, not maximum agent count.
 
 ## ArchitecturePacket
 
-The architect output carries two different kinds of constraints.
+The architect output contains both human-readable and machine-checkable intent.
 
-### Human-readable architecture
+Human-readable fields include:
 
 - objective;
 - facts;
@@ -116,9 +139,7 @@ The architect output carries two different kinds of constraints.
 - non-goals;
 - candidate actions.
 
-### Machine-checkable IntentEnvelope
-
-The current `HT → MT` implementation also binds:
+The machine-checkable `ArchitectureIntentEnvelope` binds:
 
 - allowed action types;
 - allowed scopes;
@@ -128,51 +149,52 @@ The current `HT → MT` implementation also binds:
 - optional maximum affected-record count;
 - optional maximum estimated cost.
 
-The IntentEnvelope means:
+Design rule:
 
 > **The engineer may not propose outside the architected strategic bounds.**
 
-It does **not** mean:
-
-> the metadata is true, authenticated, independently measured, or authorized for execution.
-
-That distinction is critical.
+This does not establish that proposal metadata is true, authenticated, independently measured, or authorized for execution.
 
 ## EngineeringPacket
 
-The engineer consumes a bound ArchitecturePacket and independently recomputes the Agila decision from that bound state.
-
-The engineer must not trust a caller-supplied decision.
+The engineer consumes a bound ArchitecturePacket and independently recomputes the Agila decision from that state. It must not trust a caller-supplied verdict.
 
 It returns exactly one operational intent:
 
-- `NO_ACTION` — no viable action should be proposed;
-- `RFI_REQUIRED` — unresolved uncertainty or interpretation requires architect/human clarification;
-- `PROPOSAL_ONLY` — a bounded proposal may be drafted, but no execution authority is granted.
+- `NO_ACTION` — the state is sufficiently understood and no justified action should be proposed;
+- `RFI_REQUIRED` — unresolved interpretation/evidence requires architect or human clarification;
+- `PROPOSAL_ONLY` — a bounded proposal may be drafted, without execution authority.
 
-An EngineeringPacket preserves the architecture binding, constraints, IntentEnvelope, unresolved unknowns, and selected candidate.
+The EngineeringPacket preserves architecture binding, constraints, IntentEnvelope, unresolved unknowns, and selected candidate.
 
-## RFI rule
+## Clarity / RFI precedence
 
-Unknown must remain unknown.
+Round-2 red-team found a control-flow flaw: a packet with unresolved uncertainty and no selected candidate could previously collapse into `NO_ACTION`.
 
-If Agila returns `ASK_USER` or the architecture contains unresolved unknowns, the strand returns `RFI_REQUIRED`.
+The refined precedence is:
+
+1. explicit hard `REJECT` → `NO_ACTION`;
+2. otherwise unresolved unknown or `ASK_USER` → `RFI_REQUIRED`;
+3. otherwise no viable selected action → `NO_ACTION`;
+4. otherwise → `PROPOSAL_ONLY`.
+
+Therefore:
+
+> **Absence of action is not evidence of understanding.**
 
 `RFI_REQUIRED` cannot be converted into a SAB proposal.
-
-This prevents the engineering layer from erasing uncertainty merely to keep moving.
 
 ## Proposal rule
 
 A proposal candidate may be emitted only when:
 
-1. the ArchitecturePacket binding still verifies;
-2. the EngineeringPacket binding still verifies;
+1. ArchitecturePacket binding verifies;
+2. EngineeringPacket binding verifies;
 3. engineering intent is `PROPOSAL_ONLY`;
-4. the selected candidate was actually bound by the architect;
-5. the proposed operation stays inside the machine-checkable IntentEnvelope.
+4. the selected candidate was bound by the architect;
+5. the proposed operation remains inside the machine-checkable IntentEnvelope.
 
-The resulting proposal is still labeled:
+The resulting proposal remains:
 
 `UNATTESTED`
 
@@ -199,9 +221,7 @@ Hardware-rooted attestation or cryptographic signatures may strengthen this boun
 
 ## SAB boundary
 
-SAB is not an agent, persona, or reviewer.
-
-It is a deterministic policy boundary between an action proposal and consequential execution.
+SAB is not an agent, persona, or reviewer. It is a deterministic policy boundary between an action proposal and consequential execution.
 
 No architect/engineer confidence, persona label, majority vote, or cross-review consensus can bypass an active SAB hard deny.
 
@@ -209,25 +229,26 @@ No architect/engineer confidence, persona label, majority vote, or cross-review 
 
 A primary architect→engineer pair must not self-certify consequential work.
 
-Cross-review checks epistemic/engineering quality, not execution authority.
+Cross-review checks epistemic and engineering quality, not execution authority.
 
 Examples:
 
 - `TM → KM → MB review`
 - `MG → HO → MM evidence review`
 
-A future cross-review contract should produce a versioned review result bound to the same architecture/engineering state. It still must not become an authorization token.
+A future cross-review contract should produce a versioned result bound to the same architecture/engineering state. It still must not become an authorization token.
 
 ## Trust and evidence labels
 
 Use these labels consistently:
 
 - `IMPLEMENTED` — executable code exists;
-- `TESTED` — the behavior passed a stated test on an exact source revision;
+- `TESTED` — behavior passed a stated test on an exact source revision;
 - `OPERATIONAL_ANALOGUE` — software behavior resembles a human architecture concept but is not the concept itself;
 - `PROPOSED_DESIGN` — intended mechanism without current implementation;
 - `RESEARCH_SUPPORTED` — external research supports the narrow stated claim;
 - `HYPOTHESIS` — plausible architecture claim not yet established by this project;
+- `USER_CONCEPT` / `HUMAN_CANON` — supplied human philosophy/wording preserved as source material;
 - `UNATTESTED` — generated metadata has not been independently verified at the execution boundary;
 - `UNKNOWN` — missing or unresolved evidence.
 
@@ -235,21 +256,22 @@ Do not promote one label into another by wording alone.
 
 ## Current implementation boundary
 
-### Implemented/tested in this branch
+### Implemented / tested in this branch
 
 - typed Gagamba signal weave;
-- fact/inference/prediction/unknown separation;
+- fact / inference / prediction / unknown separation;
 - duplicate/malformed signal withholding;
 - seven architect/engineer routing identities;
 - executable `HT → MT` strand;
 - deterministic non-cryptographic ArchitecturePacket binding;
-- machine-checkable architecture IntentEnvelope;
+- machine-checkable ArchitectureIntentEnvelope;
 - MT recomputation of Agila decision from bound architecture;
 - explicit `NO_ACTION / RFI_REQUIRED / PROPOSAL_ONLY` outputs;
+- ambiguity-before-inactivity precedence;
 - deterministic non-cryptographic EngineeringPacket binding;
 - proposal rejection outside architecture intent;
 - explicit `UNATTESTED` proposal output;
-- SAB deterministic policy preview and existing adversarial tests.
+- SAB deterministic policy preview and adversarial tests.
 
 ### Not implemented
 
@@ -272,17 +294,18 @@ Do not promote one label into another by wording alone.
 
 Do not clone `HT → MT` six times mechanically.
 
-For each new strand:
+For each future strand:
 
 1. define the architect's unique input/output responsibility;
-2. define machine-checkable strategic constraints where possible;
-3. define what the engineer is forbidden to decide;
-4. define the RFI/contradiction path;
-5. define the independent reviewer for consequential work;
-6. add adversarial tests;
-7. verify exact-head CI;
-8. only then add the strand to executable routing.
+2. define what must be understood before delegation;
+3. define machine-checkable strategic constraints where possible;
+4. define what the engineer is forbidden to infer or decide;
+5. define the RFI/contradiction path;
+6. define the independent reviewer for consequential work;
+7. add adversarial tests;
+8. verify exact-head CI;
+9. only then add the strand to executable routing.
 
 ## Final design rule
 
-> **Gagamba defines and binds intent. Agila engineers against that intent. Neither authorizes itself. The adapter establishes concrete operation truth. SAB decides the policy route. The human governs consequential authority.**
+> **Gagamba defines and binds intent. Agila engineers against that intent. Unclear intent returns for interpretation. Neither authorizes itself. The adapter establishes concrete operation truth. SAB decides the policy route. The human governs consequential authority.**
