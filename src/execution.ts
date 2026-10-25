@@ -22,6 +22,7 @@ export interface ExecutionPermit {
   version: typeof EXECUTION_CONTRACT_VERSION;
   trust: "SAB_POLICY_PERMIT_STRUCTURAL_UNAUTHENTICATED_APPROVER_IF_REQUIRED";
   permitId: string;
+  executionId: string;
   admissionBinding: string;
   proposal: ActionProposal;
   proposalBinding: string;
@@ -35,6 +36,7 @@ export interface ExecutionPermit {
 
 export interface IssueExecutionPermitInput {
   permitId: string;
+  executionId: string;
   candidate: SabAdmissibleCandidate;
   approval?: ApprovalRecord;
   now?: Date;
@@ -73,6 +75,11 @@ const MAX_ID_LENGTH = 200;
 const MAX_REF_LENGTH = 1000;
 const MAX_PERMIT_TTL_MS = 2 * 60_000;
 const OUTCOMES = new Set<ExecutionOutcome>(["SUCCEEDED", "FAILED", "PARTIAL", "UNKNOWN"]);
+const PERMITTED_ROUTES = new Set<Exclude<SabRoute, "DENY">>([
+  "ALLOW",
+  "ALLOW_WITH_LOG",
+  "REQUIRE_HUMAN_APPROVAL",
+]);
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -126,6 +133,9 @@ function approvalSnapshotBinding(approval?: ApprovalRecord): string | null {
  * Issues a short-lived structural permit only after Trust Admission is still fresh
  * and the current SAB policy says the proposal is authorized.
  *
+ * The execution ID is bound at issuance so one permit represents one intended
+ * execution identity. Durable idempotency still requires persistent backend state.
+ *
  * ApprovalRecord identity is not authenticated by this prototype, so the trust
  * label remains explicit about that limitation when human approval is required.
  */
@@ -150,6 +160,7 @@ export function issueExecutionPermit(input: IssueExecutionPermitInput): Executio
     version: EXECUTION_CONTRACT_VERSION,
     trust: "SAB_POLICY_PERMIT_STRUCTURAL_UNAUTHENTICATED_APPROVER_IF_REQUIRED",
     permitId: boundedText(input.permitId, MAX_ID_LENGTH, "execution_permit_id"),
+    executionId: boundedText(input.executionId, MAX_ID_LENGTH, "execution_id"),
     admissionBinding: boundedText(input.candidate.admissionBinding, 100_000, "admission_binding"),
     proposal: { ...input.candidate.proposal },
     proposalBinding: proposalBinding(input.candidate.proposal),
@@ -168,12 +179,13 @@ export function verifyExecutionPermit(permit: ExecutionPermit): boolean {
   if (permit.version !== EXECUTION_CONTRACT_VERSION) return false;
   if (permit.trust !== "SAB_POLICY_PERMIT_STRUCTURAL_UNAUTHENTICATED_APPROVER_IF_REQUIRED") return false;
   if (permit.policyVersion !== SAB_POLICY_VERSION) return false;
-  if (permit.sabRoute === "DENY") return false;
+  if (!PERMITTED_ROUTES.has(permit.sabRoute)) return false;
   if (validateProposal(permit.proposal).length > 0) return false;
   if (permit.proposalBinding !== proposalBinding(permit.proposal)) return false;
 
   try {
     boundedText(permit.permitId, MAX_ID_LENGTH, "execution_permit_id");
+    boundedText(permit.executionId, MAX_ID_LENGTH, "execution_id");
     boundedText(permit.admissionBinding, 100_000, "admission_binding");
     const issuedAt = parseIsoInstant(permit.issuedAt, "execution_permit_issued_at");
     const expiresAt = parseIsoInstant(permit.expiresAt, "execution_permit_expires_at");
@@ -211,6 +223,9 @@ export function bindExecutionReceipt(
 ): ExecutionReceipt {
   if (!verifyExecutionPermit(permit)) throw new Error("execution_permit_invalid");
   if (!OUTCOMES.has(input.outcome)) throw new TypeError("invalid_execution_outcome");
+  if (boundedText(input.executionId, MAX_ID_LENGTH, "execution_id") !== permit.executionId) {
+    throw new Error("execution_id_mismatch");
+  }
   if (validateProposal(input.reportedProposal).length > 0) throw new Error("reported_proposal_invalid");
   if (proposalBinding(input.reportedProposal) !== permit.proposalBinding) {
     throw new Error("execution_reported_operation_mismatch");
@@ -228,7 +243,7 @@ export function bindExecutionReceipt(
     version: EXECUTION_CONTRACT_VERSION,
     trust: "EXECUTION_REPORTED_UNAUTHENTICATED_EXECUTOR",
     receiptId: boundedText(input.receiptId, MAX_ID_LENGTH, "execution_receipt_id"),
-    executionId: boundedText(input.executionId, MAX_ID_LENGTH, "execution_id"),
+    executionId: permit.executionId,
     executorId: boundedText(input.executorId, MAX_ID_LENGTH, "executor_id"),
     permitBinding: permit.binding,
     admissionBinding: permit.admissionBinding,
@@ -253,6 +268,7 @@ export function verifyExecutionReceipt(receipt: ExecutionReceipt, permit: Execut
   if (receipt.version !== EXECUTION_CONTRACT_VERSION) return false;
   if (receipt.trust !== "EXECUTION_REPORTED_UNAUTHENTICATED_EXECUTOR") return false;
   if (!OUTCOMES.has(receipt.outcome)) return false;
+  if (receipt.executionId !== permit.executionId) return false;
   if (receipt.permitBinding !== permit.binding) return false;
   if (receipt.admissionBinding !== permit.admissionBinding) return false;
   if (receipt.proposalBinding !== permit.proposalBinding) return false;
