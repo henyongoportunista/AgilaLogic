@@ -69,6 +69,13 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  PROVENANCE_INTEGRITY_VERSION,
+  bindProvenanceLedger,
+  provenanceLedgerBinding,
+  verifyProvenanceIntegrity,
+} from "./provenance-integrity.js";
+export type { ProvenanceIntegrityEnvelope } from "./provenance-integrity.js";
+export {
   REPLAY_GUARD_VERSION,
   assertArchitectureStateActive,
   assertEngineeringStateActive,
