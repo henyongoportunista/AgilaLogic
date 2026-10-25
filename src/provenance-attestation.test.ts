@@ -99,6 +99,29 @@ const attestation = bindProvenanceAttestation(entry, {
 }
 
 {
+  const forgedSourceEntry = {
+    signalId: "forged-source-class",
+    kind: "FACT",
+    text: "Forged source class claim.",
+    provenance: {
+      sourceClass: "TRUST_ME_BRO",
+      producer: "attacker",
+      observedAt: "2026-10-25T08:10:00.000Z",
+    },
+  } as unknown as ProvenanceLedgerEntry;
+  throwsWith(
+    () => bindProvenanceAttestation(forgedSourceEntry, {
+      attestationId: "forged-source-attestation",
+      verifierId: "future-source-verifier",
+      verifiedAt: "2026-10-25T08:11:00.000Z",
+      expiresAt: "2026-10-25T09:00:00.000Z",
+    }),
+    "invalid_provenance_source_class",
+    "runtime source-class forgery must fail even when compile-time types are bypassed",
+  );
+}
+
+{
   const modelFactEntry: ProvenanceLedgerEntry = {
     signalId: "model-fact",
     kind: "FACT",
