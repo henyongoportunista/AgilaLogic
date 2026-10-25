@@ -1,6 +1,6 @@
 # Unified Gagamba × Agila Architecture
 
-Status: **experimental canonical design — Round-2 recalibrated**
+Status: **experimental canonical design — ROEM Phase 1 refinement applied; verification pending**
 
 Only the `HT → MT` strand is executable today. The other six architect→engineer pairings remain routing contracts, not implemented autonomous agents.
 
@@ -9,6 +9,27 @@ Only the `HT → MT` strand is executable today. The other six architect→engin
 > **Capability ≠ Authority. Architecture ≠ Authorization.**
 
 A role may observe, reason, design, engineer, review, or propose without gaining permission to mutate consequential external state.
+
+## Universal quality protocol — ROEM
+
+The architecture uses the process loop:
+
+`REFINEMENT → OPPORTUNITIES → ENHANCEMENT → MITIGATION → EVIDENCE / RECALIBRATE → REFINEMENT`
+
+ROEM is a quality/evolution protocol, not a persona or authorization mechanism.
+
+Current applied phase: **R — Refinement**.
+
+Phase-1 rule:
+
+> **Preserve what works; remove ambiguity, contradiction, duplicate state, and meaningless representational drift before adding capability.**
+
+This phase does not authorize work from O/E/M. Opportunities may be recorded, but no new capability is justified merely because it is visible.
+
+See:
+
+- `docs/ROEM_PROTOCOL.md`
+- `docs/ROEM_PHASE1_REFINEMENT.md`
 
 ## Unified Golden Axiom
 
@@ -147,13 +168,19 @@ The machine-checkable `ArchitectureIntentEnvelope` binds:
 - whether reversibility is required;
 - whether secret handling is allowed;
 - optional maximum affected-record count;
-- optional maximum estimated cost.
+- optional prototype numeric estimated-cost ceiling.
+
+Set-like action/scope/sensitivity lists are deduplicated and canonicalized before binding so equivalent intent does not drift merely because array order differs.
+
+Candidate IDs are normalized and must be unique before entering the ArchitecturePacket.
 
 Design rule:
 
 > **The engineer may not propose outside the architected strategic bounds.**
 
 This does not establish that proposal metadata is true, authenticated, independently measured, or authorized for execution.
+
+`estimatedCost` currently has no currency/unit semantics. Its numeric ceiling is prototype-only and must not be represented as a production financial-control guarantee.
 
 ## EngineeringPacket
 
@@ -183,6 +210,16 @@ Therefore:
 > **Absence of action is not evidence of understanding.**
 
 `RFI_REQUIRED` cannot be converted into a SAB proposal.
+
+## Gagamba runtime clarity
+
+TypeScript unions are not treated as runtime truth.
+
+The weave now runtime-validates the supported signal taxonomy:
+
+`FACT · INFERENCE · PREDICTION · PREFERENCE · UNKNOWN · CONSTRAINT · RESOURCE`
+
+A runtime value outside that set is withheld rather than being marked accepted and silently falling through the classifier.
 
 ## Proposal rule
 
@@ -256,15 +293,18 @@ Do not promote one label into another by wording alone.
 
 ## Current implementation boundary
 
-### Implemented / tested in this branch
+### Implemented / tested in this branch before final Phase-1 verification
 
 - typed Gagamba signal weave;
 - fact / inference / prediction / unknown separation;
 - duplicate/malformed signal withholding;
+- runtime Gagamba signal-kind allowlist;
 - seven architect/engineer routing identities;
 - executable `HT → MT` strand;
 - deterministic non-cryptographic ArchitecturePacket binding;
+- normalized unique candidate IDs;
 - machine-checkable ArchitectureIntentEnvelope;
+- canonical ordering for set-like IntentEnvelope values;
 - MT recomputation of Agila decision from bound architecture;
 - explicit `NO_ACTION / RFI_REQUIRED / PROPOSAL_ONLY` outputs;
 - ambiguity-before-inactivity precedence;
@@ -285,6 +325,7 @@ Do not promote one label into another by wording alone.
 - durable/tamper-evident approval and evidence state;
 - real model-provider generation;
 - mutation-capable external execution;
+- explicit production currency/unit semantics for estimated cost;
 - conformal risk control;
 - TEE / hardware-rooted Proof-of-Guardrail;
 - quantitative Active Inference / Free Energy computation;
