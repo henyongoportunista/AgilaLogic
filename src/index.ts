@@ -23,6 +23,7 @@ export type {
   ActionProposalMetadata,
   AgilaEngineerId,
   ArchitectEngineerPair,
+  ArchitectureIntentEnvelope,
   ArchitecturePacket,
   EngineeringIntent,
   EngineeringPacket,
