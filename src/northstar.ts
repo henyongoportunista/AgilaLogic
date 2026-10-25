@@ -1,3 +1,4 @@
+import { isExternallyVerifiedPrincipalContext } from "./external-auth.js";
 import {
   ARCHITECT_ENGINEER_PAIRS,
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -5,7 +6,7 @@ import {
   type GagambaArchitectId,
 } from "./strand.js";
 
-export const NORTHSTAR_VERSION = "2026-10-25.1" as const;
+export const NORTHSTAR_VERSION = "2026-10-25.2" as const;
 
 export type NorthstarPrincipal = "UNVERIFIED_PUBLIC" | "VERIFIED_SAL" | "VERIFIED_BJORN";
 export type PrincipalVerification = "PUBLIC_SESSION" | "EXTERNAL_AUTH";
@@ -85,6 +86,7 @@ const KNOWLEDGE_CLASSES = new Set<NorthstarKnowledgeClass>([
   "PRIVATE_OPERATOR",
   "SECRET",
 ]);
+const verifiedNorthstarContextPacks = new WeakSet<object>();
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -130,8 +132,13 @@ function normalizePrincipalContext(context: PrincipalContext, now: Date): Princi
 
   if (context.principal === "UNVERIFIED_PUBLIC") {
     if (context.verification !== "PUBLIC_SESSION") throw new Error("public_principal_verification_mismatch");
-  } else if (context.verification !== "EXTERNAL_AUTH") {
-    throw new Error("verified_principal_requires_external_auth");
+  } else {
+    if (context.verification !== "EXTERNAL_AUTH") {
+      throw new Error("verified_principal_requires_external_auth");
+    }
+    if (!isExternallyVerifiedPrincipalContext(context)) {
+      throw new Error("verified_principal_requires_external_auth_resolution");
+    }
   }
 
   const sessionId = boundedText(context.sessionId, MAX_ID_LENGTH, "principal_session_id");
@@ -203,10 +210,12 @@ function contextBinding(pack: Omit<NorthstarContextPack, "contextBinding">): str
 
 /**
  * Compiles a role-scoped Northstar context pack from a principal assertion that
- * must already come from an external authentication boundary.
+ * must already come from the external authentication boundary for VERIFIED_* users.
  *
- * This function does not authenticate Sal or Bjorn and intentionally accepts no
- * password, secret phrase, OTP, recovery code, signing key, or credential.
+ * This function does not accept a caller-fabricated VERIFIED_* PrincipalContext.
+ * Verified contexts are process-local stamped outputs of resolveVerifiedPrincipalContext().
+ * A deserialized verified session must be reverified before recompilation.
+ *
  * SECRET-class material is never eligible for model context.
  */
 export function compileNorthstarContext(input: CompileNorthstarContextInput): NorthstarContextPack {
@@ -249,7 +258,11 @@ export function compileNorthstarContext(input: CompileNorthstarContextInput): No
     immutablePrinciples: [...NORTHSTAR_IMMUTABLE_PRINCIPLES],
   };
 
-  return { ...payload, contextBinding: contextBinding(payload) };
+  const pack: NorthstarContextPack = { ...payload, contextBinding: contextBinding(payload) };
+  if (pack.principal !== "UNVERIFIED_PUBLIC") {
+    verifiedNorthstarContextPacks.add(pack);
+  }
+  return pack;
 }
 
 export function verifyNorthstarContextPack(pack: NorthstarContextPack): boolean {
@@ -268,8 +281,9 @@ export function verifyNorthstarContextPack(pack: NorthstarContextPack): boolean 
 
   if (pack.principal === "UNVERIFIED_PUBLIC") {
     if (pack.principalVerification !== "PUBLIC_SESSION") return false;
-  } else if (pack.principalVerification !== "EXTERNAL_AUTH") {
-    return false;
+  } else {
+    if (pack.principalVerification !== "EXTERNAL_AUTH") return false;
+    if (!verifiedNorthstarContextPacks.has(pack)) return false;
   }
 
   if (!Array.isArray(pack.allowedKnowledgeClasses) || pack.allowedKnowledgeClasses.length === 0) return false;
