@@ -81,6 +81,19 @@ export type {
   LifecycleRegistry,
   LifecycleRegistryEntry,
 } from "./replay.js";
+export {
+  LIFECYCLE_STORE_VERSION,
+  assertPersistedArchitectureStateActive,
+  assertPersistedEngineeringStateActive,
+  createInMemoryLifecycleRegistryStore,
+  persistArchitectureState,
+  persistEngineeringState,
+} from "./replay-store.js";
+export type {
+  LifecycleRegistryStore,
+  LifecycleStorageClass,
+  StoredLifecycleRegistry,
+} from "./replay-store.js";
 export { RFI_RESOLUTION_VERSION, prepareRfiReinjection } from "./rfi-resolution.js";
 export type {
   RfiReinjection,
