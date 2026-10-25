@@ -1,4 +1,4 @@
-import type { ProvenanceEnvelope } from "./gagamba.js";
+import type { ProvenanceEnvelope, ProvenanceSourceClass } from "./gagamba.js";
 import type { ProvenanceLedgerEntry } from "./trust.js";
 
 export const PROVENANCE_ATTESTATION_VERSION = "2026-10-25.1" as const;
@@ -29,6 +29,14 @@ export interface BindProvenanceAttestationInput {
 const MAX_ID_LENGTH = 200;
 const MAX_TEXT_LENGTH = 2000;
 const MAX_REF_LENGTH = 1000;
+const PROVENANCE_SOURCE_CLASSES = new Set<ProvenanceSourceClass>([
+  "HUMAN_STATED",
+  "TOOL_OBSERVED",
+  "SYSTEM_OBSERVED",
+  "EXTERNAL_DOCUMENT",
+  "MODEL_DERIVED",
+  "UNKNOWN_SOURCE",
+]);
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -72,6 +80,9 @@ function attestationBinding(attestation: Omit<ProvenanceAttestation, "binding">)
 
 function normalizeProvenance(provenance: ProvenanceEnvelope): ProvenanceEnvelope {
   if (typeof provenance !== "object" || provenance === null) throw new Error("provenance_required");
+  if (!PROVENANCE_SOURCE_CLASSES.has(provenance.sourceClass)) {
+    throw new Error("invalid_provenance_source_class");
+  }
   return {
     sourceClass: provenance.sourceClass,
     producer: boundedText(provenance.producer, MAX_ID_LENGTH, "provenance_producer"),
@@ -95,15 +106,15 @@ export function bindProvenanceAttestation(
 ): ProvenanceAttestation {
   if (typeof entry !== "object" || entry === null) throw new Error("provenance_entry_required");
   if (entry.provenance === null) throw new Error("provenance_entry_has_no_provenance");
-  if (entry.provenance.sourceClass === "UNKNOWN_SOURCE") throw new Error("unknown_source_cannot_be_attested");
-  if (entry.kind === "FACT" && entry.provenance.sourceClass === "MODEL_DERIVED") {
+  const provenance = normalizeProvenance(entry.provenance);
+  if (provenance.sourceClass === "UNKNOWN_SOURCE") throw new Error("unknown_source_cannot_be_attested");
+  if (entry.kind === "FACT" && provenance.sourceClass === "MODEL_DERIVED") {
     throw new Error("model_derived_fact_cannot_be_attested");
   }
 
   const verifiedAt = parseIsoInstant(input.verifiedAt, "provenance_attestation_verified_at");
   const expiresAt = parseIsoInstant(input.expiresAt, "provenance_attestation_expires_at");
   if (expiresAt.getTime() <= verifiedAt.getTime()) throw new Error("provenance_attestation_nonpositive_window");
-  const provenance = normalizeProvenance(entry.provenance);
   if (verifiedAt.getTime() < new Date(provenance.observedAt).getTime()) {
     throw new Error("provenance_attestation_predates_observation");
   }
@@ -173,10 +184,14 @@ export function provenanceAttestationMatchesEntry(
 ): boolean {
   if (!verifyProvenanceAttestation(attestation)) return false;
   if (entry.provenance === null) return false;
-  return (
-    attestation.signalId === entry.signalId &&
-    attestation.kind === entry.kind &&
-    attestation.text === entry.text &&
-    canonicalString(attestation.provenance) === canonicalString(entry.provenance)
-  );
+  try {
+    return (
+      attestation.signalId === entry.signalId &&
+      attestation.kind === entry.kind &&
+      attestation.text === entry.text &&
+      canonicalString(attestation.provenance) === canonicalString(normalizeProvenance(entry.provenance))
+    );
+  } catch {
+    return false;
+  }
 }
