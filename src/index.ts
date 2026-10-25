@@ -92,6 +92,7 @@ export {
   LIFECYCLE_STORE_VERSION,
   assertPersistedArchitectureStateActive,
   assertPersistedEngineeringStateActive,
+  assertStoredLifecycleRegistry,
   createInMemoryLifecycleRegistryStore,
   persistArchitectureState,
   persistEngineeringState,
@@ -135,6 +136,7 @@ export type {
 export {
   EXTERNAL_AUTH_BOUNDARY_VERSION,
   createPublicPrincipalContext,
+  isExternallyVerifiedPrincipalContext,
   resolveVerifiedPrincipalContext,
 } from "./external-auth.js";
 export type {
@@ -156,6 +158,7 @@ export type {
 export {
   EXECUTION_RECEIPT_VERSION,
   PRE_EXECUTION_VERSION,
+  assertExecutionPreconditionsUnchanged,
   assertResourceStateFresh,
   assertResourceStateUnchanged,
   bindApprovalToNorthstar,
@@ -170,6 +173,7 @@ export {
 export type {
   CreateResourceStateSnapshotInput,
   ExecutionOutcome,
+  ExecutionPreconditionCheckInput,
   ExecutionReceipt,
   PreExecutionRequest,
   PreparePreExecutionInput,
