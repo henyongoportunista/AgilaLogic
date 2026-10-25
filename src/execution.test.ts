@@ -1,5 +1,6 @@
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
+import { bindProvenanceLedger } from "./provenance-integrity.js";
 import { proposalBinding, SAB_POLICY_VERSION, type ApprovalRecord } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -169,8 +170,10 @@ const attestation: AdapterAttestation = {
   },
 };
 
+const provenanceLedger = buildProvenanceLedger(weave);
 const admissionInput = {
-  provenanceLedger: buildProvenanceLedger(weave),
+  provenanceLedger,
+  provenanceIntegrity: bindProvenanceLedger(provenanceLedger, boundArchitecture),
   architectureState: boundArchitecture,
   engineeringState: boundEngineering,
   northstarContext,
@@ -268,7 +271,7 @@ assertResourceStateUnchanged(prepared, unchangedResourceState, new Date("2026-10
       now: new Date("2026-10-25T06:35:00.000Z"),
     }),
     "trust_admission_failed",
-    "pre-execution must recompute Trust Admission instead of trusting a label",
+    "pre-execution must recompute Trust Admission and reject provenance mutation",
   );
 }
 
