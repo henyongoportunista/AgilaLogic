@@ -73,6 +73,29 @@ function preconditionBinding(value: Omit<ResourcePrecondition, "binding">): stri
   return canonicalString(value);
 }
 
+export function verifyResourcePreconditionArtifact(precondition: ResourcePrecondition): boolean {
+  if (typeof precondition !== "object" || precondition === null) return false;
+  if (precondition.version !== RESOURCE_PRECONDITION_VERSION) return false;
+  if (precondition.trust !== "RESOURCE_PRECONDITION_STRUCTURALLY_ATTESTED_UNAUTHENTICATED_ADAPTER") return false;
+
+  try {
+    boundedText(precondition.preconditionId, MAX_ID_LENGTH, "resource_precondition_id");
+    boundedText(precondition.admissionBinding, 100_000, "admission_binding");
+    boundedText(precondition.proposalBinding, 100_000, "proposal_binding");
+    boundedText(precondition.adapterId, MAX_ID_LENGTH, "resource_precondition_adapter_id");
+    boundedText(precondition.target, MAX_TARGET_LENGTH, "resource_precondition_target");
+    boundedText(precondition.versionToken, MAX_TOKEN_LENGTH, "resource_version_token");
+    const observedAt = parseIsoInstant(precondition.observedAt, "resource_precondition_observed_at");
+    const expiresAt = parseIsoInstant(precondition.expiresAt, "resource_precondition_expires_at");
+    if (expiresAt.getTime() <= observedAt.getTime()) return false;
+  } catch {
+    return false;
+  }
+
+  const { binding, ...payload } = precondition;
+  return binding === preconditionBinding(payload);
+}
+
 /**
  * Represents an adapter-reported resource version / reservation precondition.
  * It is structurally bound to the exact admitted proposal, but adapter identity
@@ -125,32 +148,24 @@ export function verifyResourcePrecondition(
   candidate: SabAdmissibleCandidate,
 ): boolean {
   if (!verifySabAdmissibleCandidate(candidate)) return false;
-  if (typeof precondition !== "object" || precondition === null) return false;
-  if (precondition.version !== RESOURCE_PRECONDITION_VERSION) return false;
-  if (precondition.trust !== "RESOURCE_PRECONDITION_STRUCTURALLY_ATTESTED_UNAUTHENTICATED_ADAPTER") return false;
+  if (!verifyResourcePreconditionArtifact(precondition)) return false;
   if (precondition.admissionBinding !== candidate.admissionBinding) return false;
   if (precondition.proposalBinding !== proposalBinding(candidate.proposal)) return false;
   if (precondition.adapterId !== candidate.evidence.adapterId) return false;
   if (precondition.target !== candidate.proposal.target) return false;
 
   try {
-    boundedText(precondition.preconditionId, MAX_ID_LENGTH, "resource_precondition_id");
-    boundedText(precondition.adapterId, MAX_ID_LENGTH, "resource_precondition_adapter_id");
-    boundedText(precondition.target, MAX_TARGET_LENGTH, "resource_precondition_target");
-    boundedText(precondition.versionToken, MAX_TOKEN_LENGTH, "resource_version_token");
     const observedAt = parseIsoInstant(precondition.observedAt, "resource_precondition_observed_at");
     const expiresAt = parseIsoInstant(precondition.expiresAt, "resource_precondition_expires_at");
     const admittedAt = parseIsoInstant(candidate.admittedAt, "admission_admitted_at");
     const candidateExpiry = parseIsoInstant(candidate.validUntil, "admission_valid_until");
     if (observedAt.getTime() < admittedAt.getTime()) return false;
-    if (expiresAt.getTime() <= observedAt.getTime()) return false;
     if (expiresAt.getTime() > candidateExpiry.getTime()) return false;
   } catch {
     return false;
   }
 
-  const { binding, ...payload } = precondition;
-  return binding === preconditionBinding(payload);
+  return true;
 }
 
 export function assertResourcePreconditionFresh(
