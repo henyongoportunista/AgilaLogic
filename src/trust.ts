@@ -18,6 +18,7 @@ export const TRUST_SPINE_VERSION = "2026-10-25.1" as const;
 
 const MAX_ID_LENGTH = 200;
 const MAX_TEXT_LENGTH = 2000;
+const MAX_BINDING_LENGTH = 100_000;
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -29,6 +30,10 @@ function boundedText(value: string, maxLength: number, label: string): string {
   if (normalized.length === 0) throw new TypeError(`${label}_empty`);
   if (normalized.length > maxLength) throw new TypeError(`${label}_too_long`);
   return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function canonicalize(value: unknown): unknown {
@@ -270,6 +275,8 @@ export function verifyBoundEngineeringState(state: BoundEngineeringState): boole
 export type RfiStatus = "OPEN" | "RESOLVED" | "EXPIRED" | "UNRESOLVABLE";
 export type RfiOwner = "ARCHITECT" | "HUMAN" | "ARCHITECT_OR_HUMAN";
 
+const RFI_OWNERS = new Set<RfiOwner>(["ARCHITECT", "HUMAN", "ARCHITECT_OR_HUMAN"]);
+
 export interface RfiLifecycle {
   version: typeof TRUST_SPINE_VERSION;
   rfiId: string;
@@ -304,6 +311,7 @@ export interface OpenRfiInput {
 }
 
 export function openRfi(input: OpenRfiInput): RfiLifecycle {
+  if (!RFI_OWNERS.has(input.owner)) throw new TypeError("invalid_rfi_owner");
   if (!Number.isInteger(input.maxRounds) || input.maxRounds < 1 || input.maxRounds > 20) {
     throw new TypeError("invalid_rfi_max_rounds");
   }
@@ -314,8 +322,8 @@ export function openRfi(input: OpenRfiInput): RfiLifecycle {
   const payload: Omit<RfiLifecycle, "binding"> = {
     version: TRUST_SPINE_VERSION,
     rfiId: boundedText(input.rfiId, MAX_ID_LENGTH, "rfi_id"),
-    architectureBinding: boundedText(input.architectureBinding, MAX_TEXT_LENGTH, "architecture_binding"),
-    engineeringBinding: boundedText(input.engineeringBinding, MAX_TEXT_LENGTH, "engineering_binding"),
+    architectureBinding: boundedText(input.architectureBinding, MAX_BINDING_LENGTH, "architecture_binding"),
+    engineeringBinding: boundedText(input.engineeringBinding, MAX_BINDING_LENGTH, "engineering_binding"),
     contextId: boundedText(input.contextId, MAX_ID_LENGTH, "rfi_context_id"),
     status: "OPEN",
     owner: input.owner,
@@ -441,16 +449,23 @@ export function compareAdapterAttestation(
   now = new Date(),
 ): AdapterAttestationComparison {
   const reasons: string[] = [];
+  if (!isRecord(attestation) || !isRecord(attestation.operation)) {
+    return { matched: false, reasons: ["invalid_attestation_shape"] };
+  }
 
   try {
     boundedText(attestation.attestationId, MAX_ID_LENGTH, "attestation_id");
     boundedText(attestation.requestId, MAX_ID_LENGTH, "attestation_request_id");
     boundedText(attestation.proposalId, MAX_ID_LENGTH, "attestation_proposal_id");
-    boundedText(attestation.engineeringBinding, MAX_TEXT_LENGTH, "attestation_engineering_binding");
+    boundedText(attestation.engineeringBinding, MAX_BINDING_LENGTH, "attestation_engineering_binding");
     boundedText(attestation.policyVersion, MAX_ID_LENGTH, "attestation_policy_version");
     boundedText(attestation.adapterId, MAX_ID_LENGTH, "adapter_id");
   } catch {
     return { matched: false, reasons: ["invalid_attestation_identity"] };
+  }
+
+  if (!Number.isFinite(now.getTime())) {
+    return { matched: false, reasons: ["invalid_now"] };
   }
 
   const observedAt = (() => {
