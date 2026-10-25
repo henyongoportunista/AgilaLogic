@@ -69,6 +69,25 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  REPLAY_GUARD_VERSION,
+  assertArchitectureStateActive,
+  assertEngineeringStateActive,
+  createLifecycleRegistry,
+  registerArchitectureState,
+  registerEngineeringState,
+} from "./replay.js";
+export type {
+  LifecycleKind,
+  LifecycleRegistry,
+  LifecycleRegistryEntry,
+} from "./replay.js";
+export { RFI_RESOLUTION_VERSION, prepareRfiReinjection } from "./rfi-resolution.js";
+export type {
+  RfiReinjection,
+  RfiResolutionInput,
+  RfiResolutionKind,
+} from "./rfi-resolution.js";
+export {
   NORTHSTAR_IMMUTABLE_PRINCIPLES,
   NORTHSTAR_ROLE_CONTRACTS,
   NORTHSTAR_VERSION,
