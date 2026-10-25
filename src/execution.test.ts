@@ -15,6 +15,10 @@ import {
 import { compileNorthstarContext } from "./northstar.js";
 import { bindProvenanceAttestation } from "./provenance-attestation.js";
 import {
+  bindResourcePrecondition,
+  verifyResourcePrecondition,
+} from "./resource-precondition.js";
+import {
   SAB_POLICY_VERSION,
   proposalBinding,
   type ApprovalRecord,
@@ -131,11 +135,7 @@ function makeCandidate(
   lifecycleRegistry = registerArchitectureState(lifecycleRegistry, boundArchitecture);
   lifecycleRegistry = registerEngineeringState(lifecycleRegistry, boundEngineering);
 
-  const expectation = draftUntrustedSabProposal(
-    engineering,
-    `proposal-${suffix}`,
-    metadata,
-  );
+  const expectation = draftUntrustedSabProposal(engineering, `proposal-${suffix}`, metadata);
 
   const northstarContext = compileNorthstarContext({
     roleId: "MT",
@@ -200,6 +200,16 @@ function makeCandidate(
   return result.candidate;
 }
 
+function makePrecondition(candidate: SabAdmissibleCandidate, suffix: string) {
+  return bindResourcePrecondition(candidate, {
+    preconditionId: `resource-precondition-${suffix}`,
+    adapterId: candidate.evidence.adapterId,
+    versionToken: `etag-${suffix}-v1`,
+    observedAt: "2026-10-25T09:30:00.000Z",
+    expiresAt: "2026-10-25T09:31:30.000Z",
+  });
+}
+
 const sandboxMetadata: ActionProposalMetadata = {
   type: "WRITE",
   scope: "SANDBOX",
@@ -220,16 +230,31 @@ const sandboxEnvelope: ArchitectureIntentEnvelope = {
   maxEstimatedCost: 0,
 };
 const sandboxCandidate = makeCandidate("sandbox", sandboxMetadata, sandboxEnvelope);
+const sandboxPrecondition = makePrecondition(sandboxCandidate, "sandbox");
 
 {
-  assert(sandboxCandidate.validUntil === "2026-10-25T09:50:00.000Z", "admission validity must use earliest dependency expiry");
+  assert(verifyResourcePrecondition(sandboxPrecondition, sandboxCandidate), "resource precondition must match exact admitted candidate");
+  throwsWith(
+    () => issueExecutionPermit({
+      permitId: "permit-sandbox-no-precondition",
+      executionId: "execution-sandbox-no-precondition",
+      candidate: sandboxCandidate,
+      now: baseNow,
+    }),
+    "resource_precondition_required",
+    "mutating write must not receive execution permit without resource precondition",
+  );
+
   const permit = issueExecutionPermit({
     permitId: "permit-sandbox",
     executionId: "execution-sandbox",
     candidate: sandboxCandidate,
+    resourcePrecondition: sandboxPrecondition,
     now: baseNow,
   });
   assert(permit.executionId === "execution-sandbox", "permit must bind one intended execution identity");
+  assert(permit.resourcePrecondition?.binding === sandboxPrecondition.binding, "permit must bind exact resource precondition");
+  assert(permit.expiresAt === sandboxPrecondition.expiresAt, "permit window must collapse to earliest resource precondition expiry");
   assert(permit.sabRoute === "ALLOW_WITH_LOG", "bounded sandbox write should retain SAB route");
   assert(verifyExecutionPermit(permit), "issued execution permit must verify structurally");
   assertExecutionPermitFresh(permit, new Date("2026-10-25T09:31:00.000Z"));
@@ -244,6 +269,7 @@ const sandboxCandidate = makeCandidate("sandbox", sandboxMetadata, sandboxEnvelo
     outcome: "SUCCEEDED",
     evidenceRef: "opaque:execution-evidence-sandbox",
   });
+  assert(receipt.resourcePreconditionBinding === sandboxPrecondition.binding, "receipt must preserve resource precondition binding");
   assert(receipt.trust === "EXECUTION_REPORTED_UNAUTHENTICATED_EXECUTOR", "receipt must not claim independent verification");
   assert(verifyExecutionReceipt(receipt, permit), "matching receipt must verify structurally against permit");
 
@@ -293,6 +319,45 @@ const sandboxCandidate = makeCandidate("sandbox", sandboxMetadata, sandboxEnvelo
   );
 }
 
+{
+  throwsWith(
+    () => bindResourcePrecondition(sandboxCandidate, {
+      preconditionId: "wrong-adapter-precondition",
+      adapterId: "different-adapter",
+      versionToken: "etag-wrong-adapter",
+      observedAt: "2026-10-25T09:30:00.000Z",
+      expiresAt: "2026-10-25T09:31:00.000Z",
+    }),
+    "resource_precondition_adapter_mismatch",
+    "resource precondition must come from the operation adapter represented in admission evidence",
+  );
+
+  const tamperedPrecondition = { ...sandboxPrecondition, target: "sandbox.other_target" };
+  throwsWith(
+    () => issueExecutionPermit({
+      permitId: "permit-tampered-precondition",
+      executionId: "execution-tampered-precondition",
+      candidate: sandboxCandidate,
+      resourcePrecondition: tamperedPrecondition,
+      now: baseNow,
+    }),
+    "resource_precondition_invalid",
+    "target-mutated precondition must fail before permit issuance",
+  );
+
+  throwsWith(
+    () => issueExecutionPermit({
+      permitId: "permit-expired-precondition",
+      executionId: "execution-expired-precondition",
+      candidate: sandboxCandidate,
+      resourcePrecondition: sandboxPrecondition,
+      now: new Date(sandboxPrecondition.expiresAt),
+    }),
+    "resource_precondition_expired",
+    "resource precondition must fail exactly at expiry",
+  );
+}
+
 const productionMetadata: ActionProposalMetadata = {
   type: "WRITE",
   scope: "PRODUCTION",
@@ -313,6 +378,7 @@ const productionEnvelope: ArchitectureIntentEnvelope = {
   maxEstimatedCost: 0,
 };
 const productionCandidate = makeCandidate("production", productionMetadata, productionEnvelope);
+const productionPrecondition = makePrecondition(productionCandidate, "production");
 
 {
   throwsWith(
@@ -320,6 +386,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
       permitId: "permit-production-no-approval",
       executionId: "execution-production-no-approval",
       candidate: productionCandidate,
+      resourcePrecondition: productionPrecondition,
       now: baseNow,
     }),
     "sab_execution_not_authorized",
@@ -340,6 +407,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
     executionId: "execution-production-approved",
     candidate: productionCandidate,
     approval,
+    resourcePrecondition: productionPrecondition,
     now: baseNow,
   });
   assert(permit.sabRoute === "REQUIRE_HUMAN_APPROVAL", "production permit must preserve approval route");
@@ -356,6 +424,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
       permitId: "permit-mutated-admission",
       executionId: "execution-mutated-admission",
       candidate: mutatedCandidate,
+      resourcePrecondition: sandboxPrecondition,
       now: baseNow,
     }),
     "admission_candidate_invalid",
@@ -369,6 +438,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
       permitId: "permit-expired-admission",
       executionId: "execution-expired-admission",
       candidate: sandboxCandidate,
+      resourcePrecondition: sandboxPrecondition,
       now: new Date(sandboxCandidate.validUntil),
     }),
     "sab_admissible_candidate_expired",
@@ -376,4 +446,4 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
   );
 }
 
-console.log("execution permit and receipt tests passed");
+console.log("execution permit, resource precondition, and receipt tests passed");
