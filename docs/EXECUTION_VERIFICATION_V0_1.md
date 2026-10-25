@@ -19,7 +19,7 @@ ExecutionReceipt
 (executor-reported outcome)
       |
       v
-independent verifier
+separate verifier identity
       |
       v
 ExecutionVerification
@@ -27,15 +27,27 @@ ExecutionVerification
 
 ## Verification statuses
 
-- `CONFIRMED` — independent observation matches the executor-reported outcome.
-- `CONTRADICTED` — independent observation differs from the executor-reported outcome.
+- `CONFIRMED` — a separately identified verifier observes the same **known** outcome as the executor report.
+- `CONTRADICTED` — a separately identified verifier observes a different **known** outcome.
 - `INCONCLUSIVE` — available evidence cannot independently establish agreement or contradiction.
 
-`CONFIRMED` requires a non-null `observedOutcome` equal to the receipt outcome.
+`CONFIRMED` requires a non-null known `observedOutcome` equal to the receipt outcome.
 
-`CONTRADICTED` requires a non-null `observedOutcome` different from the receipt outcome.
+`CONTRADICTED` requires two known outcomes that differ.
 
-`INCONCLUSIVE` may carry no observed outcome.
+`UNKNOWN` is not promotable to `CONFIRMED` or `CONTRADICTED`; uncertainty stays `INCONCLUSIVE` until additional evidence resolves it.
+
+## Structural independence
+
+The verifier identifier must differ from the executor identifier recorded in the receipt.
+
+This blocks the simplest form of executor self-verification in the contract:
+
+```text
+executorId == verifierId  -> reject
+```
+
+This is **identifier-level separation only**. It does not prove that two identifiers correspond to independent real-world principals or trusted services. A future trusted verifier boundary must authenticate that distinction.
 
 ## Integrity
 
@@ -64,13 +76,13 @@ If the executor reports:
 SUCCEEDED
 ```
 
-and an independent verifier observes:
+and a separate verifier observes:
 
 ```text
 FAILED
 ```
 
-then the system retains both facts as separate claims:
+then the system retains both claims:
 
 ```text
 reportedOutcome = SUCCEEDED
@@ -79,6 +91,8 @@ observedOutcome = FAILED
 ```
 
 No layer is allowed to silently rewrite the contradiction into success.
+
+If either side only has `UNKNOWN`, the result remains `INCONCLUSIVE` rather than creating false certainty.
 
 ## Trust calibration
 
@@ -95,6 +109,7 @@ The verifier identity is not independently authenticated in v0.1. This is a stru
 v0.1 does not claim:
 
 - authenticated verifier identity;
+- proof that executor and verifier are truly independent principals;
 - objective proof of success;
 - trusted external evidence acquisition;
 - durable audit persistence;
@@ -116,23 +131,25 @@ Give future read-back checks, provider status APIs, database verification, or hu
 
 ### Enhancement
 
-Add `CONFIRMED / CONTRADICTED / INCONCLUSIVE` with exact receipt/permit/execution linkage.
+Add `CONFIRMED / CONTRADICTED / INCONCLUSIVE` with exact receipt/permit/execution linkage, structural executor/verifier separation, and explicit unknown-state preservation.
 
 ### Mitigation
 
-Preserve the original receipt and keep verifier trust explicitly unauthenticated.
+Preserve the original receipt, reject structural self-verification, never promote `UNKNOWN` into confirmation, and keep verifier trust explicitly unauthenticated.
 
 ### Evidence / recalibration
 
 Tests cover:
 
-- matching success confirmation;
+- matching known-outcome confirmation;
 - contradiction without rewriting receipt;
 - inconclusive evidence;
+- executor self-verification rejection;
 - false confirmation rejection;
 - false contradiction rejection;
+- unknown outcome not promoted into confirmation/contradiction;
 - verification predating execution completion.
 
 ## Design law
 
-> **The executor reports what it believes happened. A separate verifier checks what can actually be observed. Agreement may confirm the report; disagreement must remain visible; insufficient evidence stays inconclusive.**
+> **The executor reports what it believes happened. A separately identified verifier checks what can actually be observed. Known agreement may confirm the report; known disagreement must remain visible; unknown or insufficient evidence stays inconclusive.**
