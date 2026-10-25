@@ -17,6 +17,7 @@ export {
   mtEngineer,
   runHtMtStrand,
   verifyArchitecturePacket,
+  verifyEngineeringPacket,
 } from "./strand.js";
 export type {
   ActionProposalMetadata,
@@ -28,6 +29,7 @@ export type {
   GagambaArchitectId,
   HtArchitectureInput,
   HtMtStrandResult,
+  MtEngineerResult,
   UntrustedSabProposalCandidate,
 } from "./strand.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
