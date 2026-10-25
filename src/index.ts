@@ -69,6 +69,17 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  PROVENANCE_ATTESTATION_VERSION,
+  assertProvenanceAttestationFresh,
+  bindProvenanceAttestation,
+  provenanceAttestationMatchesEntry,
+  verifyProvenanceAttestation,
+} from "./provenance-attestation.js";
+export type {
+  BindProvenanceAttestationInput,
+  ProvenanceAttestation,
+} from "./provenance-attestation.js";
+export {
   RFI_RESOLUTION_VERSION,
   bindRfiResolution,
   rfiResolutionToGagambaSignal,
