@@ -113,6 +113,30 @@ export type {
   TrustAdmissionInput,
   TrustAdmissionResult,
 } from "./admission.js";
+export {
+  EXECUTION_RECEIPT_VERSION,
+  PRE_EXECUTION_VERSION,
+  assertResourceStateFresh,
+  assertResourceStateUnchanged,
+  bindApprovalToNorthstar,
+  createResourceStateSnapshot,
+  preparePreExecution,
+  recordExecutionReceipt,
+  verifyExecutionReceipt,
+  verifyPreExecutionRequest,
+  verifyResourceStateSnapshot,
+  verifySessionBoundApproval,
+} from "./execution.js";
+export type {
+  CreateResourceStateSnapshotInput,
+  ExecutionOutcome,
+  ExecutionReceipt,
+  PreExecutionRequest,
+  PreparePreExecutionInput,
+  RecordExecutionReceiptInput,
+  ResourceStateSnapshot,
+  SessionBoundApproval,
+} from "./execution.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {
