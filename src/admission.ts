@@ -17,7 +17,7 @@ import {
   type ProvenanceLedger,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.2" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.3" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
@@ -37,6 +37,8 @@ export interface SabAdmissibleCandidate {
     architectureTrustBinding: string;
     engineeringTrustBinding: string;
     northstarContextBinding: string;
+    operatorAuthBinding: string | null;
+    operatorAuthTrust: string | null;
     attestationId: string;
     adapterId: string;
     principal: string;
@@ -176,6 +178,12 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     if (input.northstarContext.architectureVersion !== input.engineeringState.engineering.version) {
       addOnce(reasons, "northstar_engineering_version_mismatch");
     }
+    if (
+      input.northstarContext.principal !== "UNVERIFIED_PUBLIC" &&
+      (input.northstarContext.operatorAuthBinding === null || input.northstarContext.operatorAuthTrust === null)
+    ) {
+      addOnce(reasons, "northstar_verified_principal_missing_auth_evidence");
+    }
   }
 
   const operationComparison = compareAdapterAttestation(input.expectation, input.attestation, now);
@@ -199,6 +207,8 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
         architectureTrustBinding: input.architectureState.trustBinding,
         engineeringTrustBinding: input.engineeringState.trustBinding,
         northstarContextBinding: input.northstarContext.contextBinding,
+        operatorAuthBinding: input.northstarContext.operatorAuthBinding,
+        operatorAuthTrust: input.northstarContext.operatorAuthTrust,
         attestationId: operationComparison.candidate.attestationId,
         adapterId: operationComparison.candidate.adapterId,
         principal: input.northstarContext.principal,

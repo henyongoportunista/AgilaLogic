@@ -1,11 +1,16 @@
 import {
+  assertVerifiedOperatorSessionFresh,
+  verifyVerifiedOperatorSession,
+  type VerifiedOperatorSession,
+} from "./auth.js";
+import {
   ARCHITECT_ENGINEER_PAIRS,
   ARCHITECT_ENGINEER_STRAND_VERSION,
   type AgilaEngineerId,
   type GagambaArchitectId,
 } from "./strand.js";
 
-export const NORTHSTAR_VERSION = "2026-10-25.1" as const;
+export const NORTHSTAR_VERSION = "2026-10-25.2" as const;
 
 export type NorthstarPrincipal = "UNVERIFIED_PUBLIC" | "VERIFIED_SAL" | "VERIFIED_BJORN";
 export type PrincipalVerification = "PUBLIC_SESSION" | "EXTERNAL_AUTH";
@@ -26,12 +31,28 @@ export const NORTHSTAR_IMMUTABLE_PRINCIPLES = [
   "minimum_sufficient_coordination",
 ] as const;
 
-export interface PrincipalContext {
+export type PrincipalContext =
+  | {
+      principal: "UNVERIFIED_PUBLIC";
+      verification: "PUBLIC_SESSION";
+      sessionId: string;
+      issuedAt: string;
+      expiresAt: string;
+    }
+  | {
+      principal: "VERIFIED_SAL" | "VERIFIED_BJORN";
+      verification: "EXTERNAL_AUTH";
+      operatorSession: VerifiedOperatorSession;
+    };
+
+interface ResolvedPrincipalContext {
   principal: NorthstarPrincipal;
   verification: PrincipalVerification;
   sessionId: string;
   issuedAt: string;
   expiresAt: string;
+  operatorAuthBinding: string | null;
+  operatorAuthTrust: VerifiedOperatorSession["trust"] | null;
 }
 
 export interface NorthstarRoleContract {
@@ -64,6 +85,8 @@ export interface NorthstarContextPack {
   sessionId: string;
   issuedAt: string;
   expiresAt: string;
+  operatorAuthBinding: string | null;
+  operatorAuthTrust: VerifiedOperatorSession["trust"] | null;
   allowedKnowledgeClasses: NorthstarKnowledgeClass[];
   deniedKnowledgeClasses: NorthstarKnowledgeClass[];
   immutablePrinciples: string[];
@@ -123,33 +146,53 @@ function canonicalString(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
-function normalizePrincipalContext(context: PrincipalContext, now: Date): PrincipalContext {
+function normalizePrincipalContext(context: PrincipalContext, now: Date): ResolvedPrincipalContext {
   if (typeof context !== "object" || context === null) throw new TypeError("principal_context_required");
   if (!PRINCIPALS.has(context.principal)) throw new TypeError("invalid_principal");
   if (!VERIFICATION_MODES.has(context.verification)) throw new TypeError("invalid_principal_verification");
 
   if (context.principal === "UNVERIFIED_PUBLIC") {
     if (context.verification !== "PUBLIC_SESSION") throw new Error("public_principal_verification_mismatch");
-  } else if (context.verification !== "EXTERNAL_AUTH") {
-    throw new Error("verified_principal_requires_external_auth");
+
+    const sessionId = boundedText(context.sessionId, MAX_ID_LENGTH, "principal_session_id");
+    const issuedAt = parseIsoInstant(context.issuedAt, "principal_issued_at");
+    const expiresAt = parseIsoInstant(context.expiresAt, "principal_expires_at");
+    const nowMs = now.getTime();
+
+    if (!Number.isFinite(nowMs)) throw new TypeError("invalid_now");
+    if (expiresAt.getTime() <= issuedAt.getTime()) throw new TypeError("principal_nonpositive_window");
+    if (nowMs < issuedAt.getTime()) throw new Error("principal_session_not_yet_valid");
+    if (nowMs >= expiresAt.getTime()) throw new Error("principal_session_expired");
+
+    return {
+      principal: context.principal,
+      verification: context.verification,
+      sessionId,
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      operatorAuthBinding: null,
+      operatorAuthTrust: null,
+    };
   }
 
-  const sessionId = boundedText(context.sessionId, MAX_ID_LENGTH, "principal_session_id");
-  const issuedAt = parseIsoInstant(context.issuedAt, "principal_issued_at");
-  const expiresAt = parseIsoInstant(context.expiresAt, "principal_expires_at");
-  const nowMs = now.getTime();
+  if (context.verification !== "EXTERNAL_AUTH") throw new Error("verified_principal_requires_external_auth");
+  if (!("operatorSession" in context)) throw new Error("verified_principal_requires_operator_session");
+  if (!verifyVerifiedOperatorSession(context.operatorSession)) {
+    throw new Error("verified_principal_operator_session_invalid");
+  }
+  assertVerifiedOperatorSessionFresh(context.operatorSession, now);
 
-  if (!Number.isFinite(nowMs)) throw new TypeError("invalid_now");
-  if (expiresAt.getTime() <= issuedAt.getTime()) throw new TypeError("principal_nonpositive_window");
-  if (nowMs < issuedAt.getTime()) throw new Error("principal_session_not_yet_valid");
-  if (nowMs >= expiresAt.getTime()) throw new Error("principal_session_expired");
+  const expectedPrincipal = context.operatorSession.principal === "SAL" ? "VERIFIED_SAL" : "VERIFIED_BJORN";
+  if (context.principal !== expectedPrincipal) throw new Error("verified_principal_operator_session_mismatch");
 
   return {
-    principal: context.principal,
-    verification: context.verification,
-    sessionId,
-    issuedAt: issuedAt.toISOString(),
-    expiresAt: expiresAt.toISOString(),
+    principal: expectedPrincipal,
+    verification: "EXTERNAL_AUTH",
+    sessionId: context.operatorSession.sessionId,
+    issuedAt: context.operatorSession.issuedAt,
+    expiresAt: context.operatorSession.expiresAt,
+    operatorAuthBinding: context.operatorSession.sessionBinding,
+    operatorAuthTrust: context.operatorSession.trust,
   };
 }
 
@@ -202,12 +245,9 @@ function contextBinding(pack: Omit<NorthstarContextPack, "contextBinding">): str
 }
 
 /**
- * Compiles a role-scoped Northstar context pack from a principal assertion that
- * must already come from an external authentication boundary.
- *
- * This function does not authenticate Sal or Bjorn and intentionally accepts no
- * password, secret phrase, OTP, recovery code, signing key, or credential.
- * SECRET-class material is never eligible for model context.
+ * Compiles a role-scoped Northstar context pack.
+ * Verified operator principals must be backed by a fresh structurally verified operator session.
+ * Northstar itself still does not authenticate the external issuer or receive raw credentials.
  */
 export function compileNorthstarContext(input: CompileNorthstarContextInput): NorthstarContextPack {
   const now = input.now ?? new Date();
@@ -244,6 +284,8 @@ export function compileNorthstarContext(input: CompileNorthstarContextInput): No
     sessionId: principalContext.sessionId,
     issuedAt: principalContext.issuedAt,
     expiresAt: principalContext.expiresAt,
+    operatorAuthBinding: principalContext.operatorAuthBinding,
+    operatorAuthTrust: principalContext.operatorAuthTrust,
     allowedKnowledgeClasses,
     deniedKnowledgeClasses,
     immutablePrinciples: [...NORTHSTAR_IMMUTABLE_PRINCIPLES],
@@ -268,8 +310,11 @@ export function verifyNorthstarContextPack(pack: NorthstarContextPack): boolean 
 
   if (pack.principal === "UNVERIFIED_PUBLIC") {
     if (pack.principalVerification !== "PUBLIC_SESSION") return false;
-  } else if (pack.principalVerification !== "EXTERNAL_AUTH") {
-    return false;
+    if (pack.operatorAuthBinding !== null || pack.operatorAuthTrust !== null) return false;
+  } else {
+    if (pack.principalVerification !== "EXTERNAL_AUTH") return false;
+    if (typeof pack.operatorAuthBinding !== "string" || normalize(pack.operatorAuthBinding).length === 0) return false;
+    if (pack.operatorAuthTrust !== "EXTERNAL_AUTH_CONTRACT_MATCHED_UNAUTHENTICATED_ISSUER") return false;
   }
 
   if (!Array.isArray(pack.allowedKnowledgeClasses) || pack.allowedKnowledgeClasses.length === 0) return false;

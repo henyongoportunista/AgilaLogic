@@ -69,6 +69,27 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  OPERATOR_AUTH_VERSION,
+  assertOperatorAuthAssertionFresh,
+  assertVerifiedOperatorSessionFresh,
+  bindOperatorAuthAssertion,
+  consumeOperatorAuthAssertion,
+  emptyOperatorAuthReplayState,
+  verifyOperatorAuthAssertion,
+  verifyVerifiedOperatorSession,
+} from "./auth.js";
+export type {
+  AuthFactorChannel,
+  AuthFactorClass,
+  AuthFactorReceipt,
+  BindOperatorAuthAssertionInput,
+  ConsumeOperatorAuthResult,
+  OperatorAuthAssertion,
+  OperatorAuthReplayState,
+  OperatorIdentity,
+  VerifiedOperatorSession,
+} from "./auth.js";
+export {
   NORTHSTAR_IMMUTABLE_PRINCIPLES,
   NORTHSTAR_ROLE_CONTRACTS,
   NORTHSTAR_VERSION,

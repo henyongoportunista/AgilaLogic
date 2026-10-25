@@ -1,4 +1,9 @@
 import { admitForSab } from "./admission.js";
+import {
+  bindOperatorAuthAssertion,
+  consumeOperatorAuthAssertion,
+  emptyOperatorAuthReplayState,
+} from "./auth.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
@@ -136,6 +141,50 @@ const northstarContext = compileNorthstarContext({
   now: new Date("2026-10-25T03:30:00.000Z"),
 });
 
+const salAuthAssertion = bindOperatorAuthAssertion({
+  assertionId: "admission-sal-auth",
+  principal: "SAL",
+  sessionId: "admission-sal-session",
+  issuerId: "future-auth-service",
+  nonceId: "admission-sal-nonce",
+  issuedAt: "2026-10-25T03:00:00.000Z",
+  expiresAt: "2026-10-25T04:00:00.000Z",
+  factors: [
+    {
+      factorId: "admission-sal-knowledge",
+      factorClass: "KNOWLEDGE",
+      channel: "NORTHSTAR_SECRET",
+      verifierId: "secret-verifier",
+      verifiedAt: "2026-10-25T02:59:00.000Z",
+    },
+    {
+      factorId: "admission-sal-possession",
+      factorClass: "POSSESSION",
+      channel: "TOTP",
+      verifierId: "totp-verifier",
+      verifiedAt: "2026-10-25T02:59:30.000Z",
+    },
+  ],
+});
+
+const salOperatorSession = consumeOperatorAuthAssertion(
+  salAuthAssertion,
+  emptyOperatorAuthReplayState(),
+  new Date("2026-10-25T03:30:00.000Z"),
+).session;
+
+const verifiedNorthstarContext = compileNorthstarContext({
+  roleId: "MT",
+  principalContext: {
+    principal: "VERIFIED_SAL",
+    verification: "EXTERNAL_AUTH",
+    operatorSession: salOperatorSession,
+  },
+  architectureVersion: ARCHITECT_ENGINEER_STRAND_VERSION,
+  requestedKnowledgeClasses: ["PUBLIC", "INTERNAL", "PRIVATE_OPERATOR"],
+  now: new Date("2026-10-25T03:30:00.000Z"),
+});
+
 const attestation: AdapterAttestation = {
   version: TRUST_SPINE_VERSION,
   attestationId: "admission-attestation",
@@ -178,6 +227,30 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     "admission must not claim authenticated provenance, adapter identity, or execution authority",
   );
   assert(result.candidate?.proposal.target === "sandbox.preview", "admitted proposal must preserve target");
+  assert(result.candidate?.evidence.operatorAuthBinding === null, "public admission must not invent auth evidence");
+}
+
+{
+  const result = admitForSab({
+    provenanceLedger,
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext: verifiedNorthstarContext,
+    expectation,
+    attestation,
+    now: admissionNow,
+  });
+
+  assert(result.admitted, "verified operator context may pass structural admission when all other contracts match");
+  assert(
+    result.candidate?.evidence.operatorAuthBinding === salOperatorSession.sessionBinding,
+    "admission evidence must preserve the operator-session binding",
+  );
+  assert(
+    result.candidate?.evidence.operatorAuthTrust === salOperatorSession.trust,
+    "admission evidence must preserve auth trust calibration",
+  );
+  assert(result.candidate?.evidence.principal === "VERIFIED_SAL", "admission must preserve principal identity");
 }
 
 {
@@ -271,4 +344,4 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   assert(result.reasons.includes("engineering_state_not_fresh"), "stale engineering state must be explicit");
 }
 
-console.log("trust admission v0.2 tests passed");
+console.log("trust admission v0.3 tests passed");
