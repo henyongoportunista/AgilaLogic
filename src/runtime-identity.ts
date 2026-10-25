@@ -1,6 +1,6 @@
 import type { AdapterAttestation } from "./trust.js";
 
-export const RUNTIME_IDENTITY_VERSION = "2026-10-25.1" as const;
+export const RUNTIME_IDENTITY_VERSION = "2026-10-25.2" as const;
 
 const MAX_ID_LENGTH = 200;
 const MAX_REF_LENGTH = 4000;
@@ -38,6 +38,21 @@ function parseIsoInstant(value: string, label: string): Date {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => [key, canonicalize(entry)]),
+  );
+}
+
+function canonicalString(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
 }
 
 export type RuntimeActorKind = "ADAPTER" | "EXECUTOR";
@@ -94,20 +109,45 @@ export interface ResolvedRuntimeIdentity {
   assurance: RuntimeIdentityAssurance;
   authenticatedAt: string;
   expiresAt: string;
+  binding: string;
 }
 
 export interface VerifiedAdapterAttestation {
   version: typeof RUNTIME_IDENTITY_VERSION;
   identity: ResolvedRuntimeIdentity;
   attestation: AdapterAttestation;
+  binding: string;
+}
+
+function runtimeIdentityBinding(identity: Omit<ResolvedRuntimeIdentity, "binding">): string {
+  return canonicalString(identity);
+}
+
+function adapterAttestationIdentityBinding(
+  value: Omit<VerifiedAdapterAttestation, "binding">,
+): string {
+  return canonicalString({
+    runtimeIdentityVersion: RUNTIME_IDENTITY_VERSION,
+    identityBinding: value.identity.binding,
+    attestation: value.attestation,
+  });
 }
 
 export function isResolvedRuntimeIdentity(identity: ResolvedRuntimeIdentity): boolean {
-  return typeof identity === "object" && identity !== null && verifiedRuntimeIdentities.has(identity);
+  if (typeof identity !== "object" || identity === null || !verifiedRuntimeIdentities.has(identity)) {
+    return false;
+  }
+  const { binding, ...payload } = identity;
+  return binding === runtimeIdentityBinding(payload);
 }
 
 export function isVerifiedAdapterAttestation(value: VerifiedAdapterAttestation): boolean {
-  return typeof value === "object" && value !== null && verifiedAdapterAttestations.has(value);
+  if (typeof value !== "object" || value === null || !verifiedAdapterAttestations.has(value)) {
+    return false;
+  }
+  if (!isResolvedRuntimeIdentity(value.identity)) return false;
+  const { binding, ...payload } = value;
+  return binding === adapterAttestationIdentityBinding(payload);
 }
 
 export async function resolveRuntimeIdentity(
@@ -171,7 +211,7 @@ export async function resolveRuntimeIdentity(
     throw new Error("runtime_identity_assurance_invalid");
   }
 
-  const identity: ResolvedRuntimeIdentity = {
+  const payload: Omit<ResolvedRuntimeIdentity, "binding"> = {
     version: RUNTIME_IDENTITY_VERSION,
     providerId,
     actorKind,
@@ -181,6 +221,10 @@ export async function resolveRuntimeIdentity(
     assurance: result.assurance,
     authenticatedAt: authenticatedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
+  };
+  const identity: ResolvedRuntimeIdentity = {
+    ...payload,
+    binding: runtimeIdentityBinding(payload),
   };
   verifiedRuntimeIdentities.add(identity);
   return identity;
@@ -223,10 +267,14 @@ export function bindAdapterAttestationToIdentity(
     throw new Error("adapter_attestation_outlives_identity");
   }
 
-  const verified: VerifiedAdapterAttestation = {
+  const payload: Omit<VerifiedAdapterAttestation, "binding"> = {
     version: RUNTIME_IDENTITY_VERSION,
     identity,
     attestation: { ...attestation, operation: { ...attestation.operation } },
+  };
+  const verified: VerifiedAdapterAttestation = {
+    ...payload,
+    binding: adapterAttestationIdentityBinding(payload),
   };
   verifiedAdapterAttestations.add(verified);
   return verified;
