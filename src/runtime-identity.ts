@@ -58,11 +58,6 @@ function canonicalString(value: unknown): string {
 export type RuntimeActorKind = "ADAPTER" | "EXECUTOR";
 export type RuntimeIdentityAssurance = "AUTHENTICATED_CHANNEL" | "SIGNED_ASSERTION" | "HARDWARE_ATTESTED";
 
-/**
- * Opaque evidence reference presented to a server-side runtime identity verifier.
- * The actor ID is deliberately absent: callers do not get to declare who the
- * adapter/executor is. The verifier resolves actorId from its own trust mapping.
- */
 export interface RuntimeIdentityEvidence {
   version: typeof RUNTIME_IDENTITY_VERSION;
   providerId: string;
@@ -90,9 +85,7 @@ export interface RejectedRuntimeIdentityResult {
   reason: string;
 }
 
-export type RuntimeIdentityVerification =
-  | VerifiedRuntimeIdentityResult
-  | RejectedRuntimeIdentityResult;
+export type RuntimeIdentityVerification = VerifiedRuntimeIdentityResult | RejectedRuntimeIdentityResult;
 
 export interface RuntimeIdentityVerifier {
   providerId: string;
@@ -112,8 +105,14 @@ export interface ResolvedRuntimeIdentity {
   binding: string;
 }
 
+/**
+ * Verified wrapper around the exact adapter attestation admitted to the trust chain.
+ * `adapterId` is duplicated only as a compatibility/readability field and must
+ * equal both identity.actorId and attestation.adapterId.
+ */
 export interface VerifiedAdapterAttestation {
   version: typeof RUNTIME_IDENTITY_VERSION;
+  adapterId: string;
   identity: ResolvedRuntimeIdentity;
   attestation: AdapterAttestation;
   binding: string;
@@ -128,6 +127,7 @@ function adapterAttestationIdentityBinding(
 ): string {
   return canonicalString({
     runtimeIdentityVersion: RUNTIME_IDENTITY_VERSION,
+    adapterId: value.adapterId,
     identityBinding: value.identity.binding,
     attestation: value.attestation,
   });
@@ -146,6 +146,9 @@ export function isVerifiedAdapterAttestation(value: VerifiedAdapterAttestation):
     return false;
   }
   if (!isResolvedRuntimeIdentity(value.identity)) return false;
+  if (value.adapterId !== value.identity.actorId || value.adapterId !== value.attestation.adapterId) {
+    return false;
+  }
   const { binding, ...payload } = value;
   return binding === adapterAttestationIdentityBinding(payload);
 }
@@ -159,15 +162,11 @@ export async function resolveRuntimeIdentity(
   for (const key of Object.keys(evidence)) {
     if (!EVIDENCE_FIELDS.has(key)) throw new Error("unexpected_runtime_identity_evidence_field");
   }
-  if (evidence.version !== RUNTIME_IDENTITY_VERSION) {
-    throw new Error("runtime_identity_version_mismatch");
-  }
+  if (evidence.version !== RUNTIME_IDENTITY_VERSION) throw new Error("runtime_identity_version_mismatch");
 
   const providerId = boundedText(evidence.providerId as string, MAX_ID_LENGTH, "runtime_provider_id");
   const actorKind = evidence.actorKind;
-  if (actorKind !== "ADAPTER" && actorKind !== "EXECUTOR") {
-    throw new TypeError("runtime_actor_kind_invalid");
-  }
+  if (actorKind !== "ADAPTER" && actorKind !== "EXECUTOR") throw new TypeError("runtime_actor_kind_invalid");
   const sessionHandle = boundedText(evidence.sessionHandle as string, MAX_ID_LENGTH, "runtime_session_handle");
   const verificationRef = boundedText(evidence.verificationRef as string, MAX_REF_LENGTH, "runtime_verification_ref");
   if (boundedText(verifier.providerId, MAX_ID_LENGTH, "runtime_verifier_provider_id") !== providerId) {
@@ -195,9 +194,7 @@ export async function resolveRuntimeIdentity(
   const subjectRef = boundedText(result.subjectRef, MAX_REF_LENGTH, "runtime_subject_ref");
   const authenticatedAt = parseIsoInstant(result.authenticatedAt, "runtime_authenticated_at");
   const expiresAt = parseIsoInstant(result.expiresAt, "runtime_expires_at");
-  if (expiresAt.getTime() <= authenticatedAt.getTime()) {
-    throw new Error("runtime_identity_nonpositive_window");
-  }
+  if (expiresAt.getTime() <= authenticatedAt.getTime()) throw new Error("runtime_identity_nonpositive_window");
   if (expiresAt.getTime() - authenticatedAt.getTime() > MAX_IDENTITY_WINDOW_MS) {
     throw new Error("runtime_identity_window_too_long");
   }
@@ -222,10 +219,7 @@ export async function resolveRuntimeIdentity(
     authenticatedAt: authenticatedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
   };
-  const identity: ResolvedRuntimeIdentity = {
-    ...payload,
-    binding: runtimeIdentityBinding(payload),
-  };
+  const identity: ResolvedRuntimeIdentity = { ...payload, binding: runtimeIdentityBinding(payload) };
   verifiedRuntimeIdentities.add(identity);
   return identity;
 }
@@ -243,32 +237,22 @@ export function assertResolvedRuntimeIdentityFresh(
   if (nowMs >= new Date(identity.expiresAt).getTime()) throw new Error("runtime_identity_expired");
 }
 
-/**
- * Couples a structurally valid adapter attestation to an independently resolved
- * adapter identity. The attestation remains non-cryptographic unless the real
- * verifier/provider gives it cryptographic or channel-authenticated meaning.
- */
 export function bindAdapterAttestationToIdentity(
   attestation: AdapterAttestation,
   identity: ResolvedRuntimeIdentity,
   now = new Date(),
 ): VerifiedAdapterAttestation {
   assertResolvedRuntimeIdentityFresh(identity, "ADAPTER", now);
-  if (identity.actorId !== attestation.adapterId) {
-    throw new Error("adapter_identity_attestation_mismatch");
-  }
-  if (now.getTime() < new Date(attestation.observedAt).getTime()) {
-    throw new Error("adapter_attestation_not_yet_valid");
-  }
-  if (now.getTime() >= new Date(attestation.expiresAt).getTime()) {
-    throw new Error("adapter_attestation_expired");
-  }
+  if (identity.actorId !== attestation.adapterId) throw new Error("adapter_identity_attestation_mismatch");
+  if (now.getTime() < new Date(attestation.observedAt).getTime()) throw new Error("adapter_attestation_not_yet_valid");
+  if (now.getTime() >= new Date(attestation.expiresAt).getTime()) throw new Error("adapter_attestation_expired");
   if (new Date(attestation.expiresAt).getTime() > new Date(identity.expiresAt).getTime()) {
     throw new Error("adapter_attestation_outlives_identity");
   }
 
   const payload: Omit<VerifiedAdapterAttestation, "binding"> = {
     version: RUNTIME_IDENTITY_VERSION,
+    adapterId: attestation.adapterId,
     identity,
     attestation: { ...attestation, operation: { ...attestation.operation } },
   };
@@ -286,13 +270,9 @@ export function assertVerifiedAdapterAttestationFresh(
 ): void {
   if (!isVerifiedAdapterAttestation(value)) throw new Error("adapter_attestation_identity_not_verified");
   assertResolvedRuntimeIdentityFresh(value.identity, "ADAPTER", now);
-  if (value.identity.actorId !== value.attestation.adapterId) {
+  if (value.adapterId !== value.identity.actorId || value.adapterId !== value.attestation.adapterId) {
     throw new Error("adapter_identity_attestation_mismatch");
   }
-  if (now.getTime() < new Date(value.attestation.observedAt).getTime()) {
-    throw new Error("adapter_attestation_not_yet_valid");
-  }
-  if (now.getTime() >= new Date(value.attestation.expiresAt).getTime()) {
-    throw new Error("adapter_attestation_expired");
-  }
+  if (now.getTime() < new Date(value.attestation.observedAt).getTime()) throw new Error("adapter_attestation_not_yet_valid");
+  if (now.getTime() >= new Date(value.attestation.expiresAt).getTime()) throw new Error("adapter_attestation_expired");
 }
