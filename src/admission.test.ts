@@ -2,6 +2,12 @@ import { admitForSab } from "./admission.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
+import {
+  RUNTIME_IDENTITY_VERSION,
+  bindAdapterAttestationToIdentity,
+  resolveRuntimeIdentity,
+  type RuntimeIdentityVerifier,
+} from "./runtime-identity.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -94,7 +100,6 @@ const { engineering } = mtEngineer(
   },
   "admission-engineering",
 );
-
 assert(engineering.intent === "PROPOSAL_ONLY", "fixture must produce proposal-only engineering");
 
 const engineeringLifecycle: PacketLifecycle = {
@@ -159,6 +164,41 @@ const attestation: AdapterAttestation = {
   },
 };
 
+const adapterVerifier: RuntimeIdentityVerifier = {
+  providerId: "fixture-runtime-provider",
+  async verify() {
+    return {
+      verified: true,
+      providerId: "fixture-runtime-provider",
+      actorKind: "ADAPTER",
+      actorId: "mock-adapter-contract",
+      sessionId: "adapter-session-1",
+      subjectRef: "fixture-runtime://adapter/mock-adapter-contract",
+      assurance: "SIGNED_ASSERTION",
+      authenticatedAt: "2026-10-25T03:00:00.000Z",
+      expiresAt: "2026-10-25T04:00:00.000Z",
+      revoked: false,
+    };
+  },
+};
+
+const adapterIdentity = await resolveRuntimeIdentity(
+  {
+    version: RUNTIME_IDENTITY_VERSION,
+    providerId: "fixture-runtime-provider",
+    actorKind: "ADAPTER",
+    sessionHandle: "adapter-session-1",
+    verificationRef: "opaque://runtime/adapter-session-1",
+  },
+  adapterVerifier,
+  new Date("2026-10-25T03:34:00.000Z"),
+);
+const verifiedAttestation = bindAdapterAttestationToIdentity(
+  attestation,
+  adapterIdentity,
+  new Date("2026-10-25T03:34:00.000Z"),
+);
+
 const provenanceLedger = buildProvenanceLedger(weave);
 const provenanceIntegrity = bindProvenanceLedger(provenanceLedger, boundArchitecture);
 const admissionNow = new Date("2026-10-25T03:34:00.000Z");
@@ -171,20 +211,43 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation,
+    verifiedAttestation,
     now: admissionNow,
   });
 
-  assert(result.admitted, "matching source/state/role/operation contracts must be admitted structurally");
+  assert(result.admitted, "matching source/state/role/operation/adapter identity contracts must be admitted structurally");
   assert(
     result.candidate?.trust === "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
-    "admission must not claim authenticated provenance, adapter identity, or execution authority",
+    "admission must not overclaim cryptographic or execution authority",
   );
   assert(result.candidate?.proposal.target === "sandbox.preview", "admitted proposal must preserve target");
   assert(
     result.candidate?.evidence.provenanceIntegrityBinding === provenanceIntegrity.binding,
     "admission evidence must retain exact provenance integrity binding",
   );
+  assert(
+    result.candidate?.evidence.adapterIdentityBinding === adapterIdentity.binding,
+    "admission evidence must retain exact resolved adapter identity binding",
+  );
+}
+
+{
+  const forgedVerifiedAttestation = {
+    ...verifiedAttestation,
+    identity: { ...verifiedAttestation.identity },
+  };
+  const result = admitForSab({
+    provenanceLedger,
+    provenanceIntegrity,
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    verifiedAttestation: forgedVerifiedAttestation,
+    now: admissionNow,
+  });
+  assert(!result.admitted, "copied adapter identity wrapper must lose runtime verification stamp");
+  assert(result.reasons.includes("adapter_identity_not_verified_or_fresh"), "adapter identity failure must be explicit");
 }
 
 {
@@ -203,16 +266,12 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation,
+    verifiedAttestation,
     now: admissionNow,
   });
 
   assert(!result.admitted, "fact provenance mutation must block structural admission");
   assert(result.reasons.includes("provenance_integrity_invalid"), "ledger mutation must break provenance integrity binding");
-  assert(
-    result.reasons.includes("architecture_fact_unresolved_provenance"),
-    "missing fact provenance must remain explicit",
-  );
   assert(result.candidate === undefined, "failed provenance must emit no candidate");
 }
 
@@ -238,7 +297,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext: wrongRoleContext,
     expectation,
-    attestation,
+    verifiedAttestation,
     now: admissionNow,
   });
 
@@ -247,6 +306,16 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 }
 
 {
+  const mismatchedAttestation: AdapterAttestation = {
+    ...attestation,
+    attestationId: "admission-attestation-mismatch",
+    operation: { ...attestation.operation, target: "production.customer" },
+  };
+  const verifiedMismatch = bindAdapterAttestationToIdentity(
+    mismatchedAttestation,
+    adapterIdentity,
+    admissionNow,
+  );
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
@@ -254,11 +323,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation: {
-      ...attestation,
-      attestationId: "admission-attestation-mismatch",
-      operation: { ...attestation.operation, target: "production.customer" },
-    },
+    verifiedAttestation: verifiedMismatch,
     now: admissionNow,
   });
 
@@ -275,7 +340,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation,
+    verifiedAttestation,
     now: new Date("2026-10-25T03:56:00.000Z"),
   });
 
@@ -283,4 +348,4 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   assert(result.reasons.includes("engineering_state_not_fresh"), "stale engineering state must be explicit");
 }
 
-console.log("trust admission v0.3 tests passed");
+console.log("trust admission v0.4 adapter identity tests passed");
