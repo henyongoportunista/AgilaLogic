@@ -1,4 +1,4 @@
-import type { ActionProposal } from "./sab.js";
+import { validateProposal, type ActionProposal } from "./sab.js";
 import {
   assertLifecycleActive,
   verifyLifecycleRegistry,
@@ -29,7 +29,7 @@ import {
   type ProvenanceLedgerEntry,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.5" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.6" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
@@ -46,6 +46,8 @@ export interface TrustAdmissionInput {
 export interface SabAdmissibleCandidate {
   trust: "STRUCTURALLY_ADMITTED_UNAUTHENTICATED";
   admissionVersion: typeof TRUST_ADMISSION_VERSION;
+  admittedAt: string;
+  validUntil: string;
   proposal: ActionProposal;
   evidence: {
     architectureTrustBinding: string;
@@ -61,12 +63,75 @@ export interface SabAdmissibleCandidate {
     principal: string;
     roleId: string;
   };
+  admissionBinding: string;
 }
 
 export interface TrustAdmissionResult {
   admitted: boolean;
   reasons: string[];
   candidate?: SabAdmissibleCandidate;
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => [key, canonicalize(entry)]),
+  );
+}
+
+function canonicalString(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+function parseIsoInstant(value: string): Date | null {
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) return null;
+  return parsed;
+}
+
+function admissionCandidateBinding(candidate: Omit<SabAdmissibleCandidate, "admissionBinding">): string {
+  return canonicalString(candidate);
+}
+
+export function verifySabAdmissibleCandidate(candidate: SabAdmissibleCandidate): boolean {
+  if (typeof candidate !== "object" || candidate === null) return false;
+  if (candidate.trust !== "STRUCTURALLY_ADMITTED_UNAUTHENTICATED") return false;
+  if (candidate.admissionVersion !== TRUST_ADMISSION_VERSION) return false;
+  if (validateProposal(candidate.proposal).length > 0) return false;
+
+  const admittedAt = parseIsoInstant(candidate.admittedAt);
+  const validUntil = parseIsoInstant(candidate.validUntil);
+  if (!admittedAt || !validUntil || validUntil.getTime() <= admittedAt.getTime()) return false;
+
+  if (typeof candidate.evidence !== "object" || candidate.evidence === null) return false;
+  if (!Array.isArray(candidate.evidence.provenanceAttestationIds)) return false;
+  if (!Array.isArray(candidate.evidence.provenanceVerifierIds)) return false;
+  if (new Set(candidate.evidence.provenanceAttestationIds).size !== candidate.evidence.provenanceAttestationIds.length) {
+    return false;
+  }
+  if (new Set(candidate.evidence.provenanceVerifierIds).size !== candidate.evidence.provenanceVerifierIds.length) {
+    return false;
+  }
+
+  const { admissionBinding, ...payload } = candidate;
+  return admissionBinding === admissionCandidateBinding(payload);
+}
+
+export function assertSabAdmissibleCandidateFresh(
+  candidate: SabAdmissibleCandidate,
+  now = new Date(),
+): void {
+  if (!verifySabAdmissibleCandidate(candidate)) throw new Error("sab_admissible_candidate_invalid");
+  if (!Number.isFinite(now.getTime())) throw new TypeError("invalid_now");
+  const admittedAt = new Date(candidate.admittedAt).getTime();
+  const validUntil = new Date(candidate.validUntil).getTime();
+  if (now.getTime() < admittedAt) throw new Error("sab_admissible_candidate_not_yet_valid");
+  if (now.getTime() >= validUntil) throw new Error("sab_admissible_candidate_expired");
 }
 
 function addOnce(reasons: string[], reason: string): void {
@@ -163,7 +228,6 @@ function validateFactProvenance(
       if (acceptedAttestations.length > acceptedBefore) {
         attestedKnownOrigin = true;
       } else if (reasons.length > reasonsBefore && knownOriginEntries.length > 1) {
-        // A different same-text FACT entry may still provide a valid attested origin.
         const newlyAdded = reasons.slice(reasonsBefore);
         for (const reason of newlyAdded) {
           const index = reasons.indexOf(reason);
@@ -176,6 +240,20 @@ function validateFactProvenance(
       addOnce(reasons, "architecture_fact_provenance_not_attested");
     }
   }
+}
+
+function minimumExpiry(input: TrustAdmissionInput, acceptedAttestations: ProvenanceAttestation[]): string {
+  const expiries = [
+    input.architectureState.lifecycle.expiresAt,
+    input.engineeringState.lifecycle.expiresAt,
+    input.northstarContext.expiresAt,
+    input.attestation.expiresAt,
+    ...acceptedAttestations.map((attestation) => attestation.expiresAt),
+  ];
+  const parsed = expiries.map((value) => parseIsoInstant(value));
+  if (parsed.some((value) => value === null)) throw new Error("admission_expiry_invalid");
+  const earliest = Math.min(...parsed.map((value) => (value as Date).getTime()));
+  return new Date(earliest).toISOString();
 }
 
 /**
@@ -310,27 +388,41 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     return { admitted: false, reasons };
   }
 
+  let validUntil: string;
+  try {
+    validUntil = minimumExpiry(input, acceptedProvenanceAttestations);
+  } catch {
+    return { admitted: false, reasons: ["admission_expiry_invalid"] };
+  }
+  if (new Date(validUntil).getTime() <= now.getTime()) {
+    return { admitted: false, reasons: ["admission_window_already_expired"] };
+  }
+
+  const payload: Omit<SabAdmissibleCandidate, "admissionBinding"> = {
+    trust: "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
+    admissionVersion: TRUST_ADMISSION_VERSION,
+    admittedAt: now.toISOString(),
+    validUntil,
+    proposal: { ...operationComparison.candidate.proposal },
+    evidence: {
+      architectureTrustBinding: input.architectureState.trustBinding,
+      engineeringTrustBinding: input.engineeringState.trustBinding,
+      lifecycleRegistryBinding: input.lifecycleRegistry.binding,
+      northstarContextBinding: input.northstarContext.contextBinding,
+      operatorAuthBinding: input.northstarContext.operatorAuthBinding,
+      operatorAuthTrust: input.northstarContext.operatorAuthTrust,
+      provenanceAttestationIds: acceptedProvenanceAttestations.map((entry) => entry.attestationId).sort(),
+      provenanceVerifierIds: [...new Set(acceptedProvenanceAttestations.map((entry) => entry.verifierId))].sort(),
+      attestationId: operationComparison.candidate.attestationId,
+      adapterId: operationComparison.candidate.adapterId,
+      principal: input.northstarContext.principal,
+      roleId: input.northstarContext.roleId,
+    },
+  };
+
   return {
     admitted: true,
     reasons: ["source_state_role_lifecycle_and_operation_contracts_structurally_match"],
-    candidate: {
-      trust: "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
-      admissionVersion: TRUST_ADMISSION_VERSION,
-      proposal: { ...operationComparison.candidate.proposal },
-      evidence: {
-        architectureTrustBinding: input.architectureState.trustBinding,
-        engineeringTrustBinding: input.engineeringState.trustBinding,
-        lifecycleRegistryBinding: input.lifecycleRegistry.binding,
-        northstarContextBinding: input.northstarContext.contextBinding,
-        operatorAuthBinding: input.northstarContext.operatorAuthBinding,
-        operatorAuthTrust: input.northstarContext.operatorAuthTrust,
-        provenanceAttestationIds: acceptedProvenanceAttestations.map((entry) => entry.attestationId).sort(),
-        provenanceVerifierIds: [...new Set(acceptedProvenanceAttestations.map((entry) => entry.verifierId))].sort(),
-        attestationId: operationComparison.candidate.attestationId,
-        adapterId: operationComparison.candidate.adapterId,
-        principal: input.northstarContext.principal,
-        roleId: input.northstarContext.roleId,
-      },
-    },
+    candidate: { ...payload, admissionBinding: admissionCandidateBinding(payload) },
   };
 }
