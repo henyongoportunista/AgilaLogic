@@ -46,6 +46,16 @@ A lifecycle cannot supersede a missing active predecessor, and the successor mus
 
 This prevents silent forks from being treated as equivalent current state.
 
+## Lane independence
+
+Architecture and Engineering lifecycles are tracked independently.
+
+Superseding an Architecture lifecycle does **not** silently mutate the Engineering registry entry. The older Engineering lifecycle remains visible in its own lane until an explicit Engineering supersession occurs.
+
+That does not make the old Engineering packet usable with the new Architecture packet: Trust Admission still requires the exact Architecture↔Engineering trust binding relationship, so a mixed old/new pair fails closed.
+
+This preserves auditability and avoids hidden cascading state mutation.
+
 ## Trust Admission integration
 
 Trust Admission v0.4 now requires both:
