@@ -333,7 +333,7 @@ export function verifyPreExecutionRequest(request: PreExecutionRequest): boolean
   if (request.version !== PRE_EXECUTION_VERSION) return false;
   if (request.trust !== "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED") return false;
   if (request.policyVersion !== SAB_POLICY_VERSION) return false;
-  if (request.sabRoute === "DENY") return false;
+  if ((request.sabRoute as SabRoute) === "DENY") return false;
   if (request.proposalBinding !== proposalBinding(request.proposal)) return false;
   try {
     const preparedAt = parseIsoInstant(request.preparedAt, "pre_execution_prepared_at");
