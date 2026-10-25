@@ -9,6 +9,7 @@ import {
   verifyArchitecturePacket,
   verifyEngineeringPacket,
 } from "./strand.js";
+import type { ArchitectureIntentEnvelope } from "./strand.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -29,6 +30,16 @@ const policy = {
   autonomyLevel: 2,
   riskTolerance: 0.3,
   confidenceThreshold: 0.7,
+};
+
+const sandboxEnvelope: ArchitectureIntentEnvelope = {
+  allowedActionTypes: ["READ", "DRAFT", "WRITE"],
+  allowedScopes: ["LOCAL", "SANDBOX"],
+  allowedDataSensitivities: ["PUBLIC", "INTERNAL"],
+  requireReversible: true,
+  allowSecrets: false,
+  maxAffectedRecords: 10,
+  maxEstimatedCost: 1,
 };
 
 const woven = weaveSignals({
@@ -58,6 +69,7 @@ const woven = weaveSignals({
     weave: woven,
     successCriteria: ["A proposal can be reviewed without external execution."],
     nonGoals: ["Do not deploy."],
+    intentEnvelope: sandboxEnvelope,
   });
 
   assert(verifyArchitecturePacket(architecture), "architecture binding should verify");
@@ -67,6 +79,10 @@ const woven = weaveSignals({
     architecture.constraints.includes("human_preference: Prefer the smallest reversible change."),
     "must preserve human preference as explicit constraint",
   );
+  assert(
+    architecture.intentEnvelope.allowedScopes.join(",") === "LOCAL,SANDBOX",
+    "must preserve machine-checkable scope intent",
+  );
 }
 
 {
@@ -75,6 +91,7 @@ const woven = weaveSignals({
     objective: "Keep the current architecture bounded.",
     weave: woven,
     successCriteria: ["No silent constraint changes."],
+    intentEnvelope: sandboxEnvelope,
   });
 
   architecture.constraints.push("Allow production mutation.");
@@ -97,6 +114,7 @@ const woven = weaveSignals({
       weave: woven,
       successCriteria: ["Proposal is reviewable and remains non-executing."],
       nonGoals: ["No live deployment."],
+      intentEnvelope: sandboxEnvelope,
     },
     policy,
     "eng-run",
@@ -126,7 +144,42 @@ const woven = weaveSignals({
   const sabDecision = evaluateProposal(candidateProposal.proposal);
   assert(sabDecision.route === "ALLOW_WITH_LOG", `expected policy preview ALLOW_WITH_LOG, got ${sabDecision.route}`);
 
-  result.engineering.preservedConstraints.push("silently changed");
+  let productionBlocked = false;
+  try {
+    draftUntrustedSabProposal(result.engineering, "proposal-production", {
+      type: "WRITE",
+      scope: "PRODUCTION",
+      target: "production.customer_status",
+      reversible: true,
+      dataSensitivity: "INTERNAL",
+      affectedRecords: 1,
+      estimatedCost: 0,
+      containsSecrets: false,
+    });
+  } catch (error) {
+    productionBlocked =
+      error instanceof Error && error.message.includes("scope_outside_architecture");
+  }
+  assert(productionBlocked, "engineer must not draft outside the architect's scope envelope");
+
+  let unknownBlastRadiusBlocked = false;
+  try {
+    draftUntrustedSabProposal(result.engineering, "proposal-unknown-blast-radius", {
+      type: "WRITE",
+      scope: "SANDBOX",
+      target: "sandbox.preview",
+      reversible: true,
+      dataSensitivity: "INTERNAL",
+      estimatedCost: 0,
+      containsSecrets: false,
+    });
+  } catch (error) {
+    unknownBlastRadiusBlocked =
+      error instanceof Error && error.message.includes("unknown_blast_radius_outside_architecture");
+  }
+  assert(unknownBlastRadiusBlocked, "bounded architecture must not treat unknown blast radius as safe");
+
+  result.engineering.preservedIntentEnvelope.allowedScopes.push("PRODUCTION");
   assert(!verifyEngineeringPacket(result.engineering), "mutated engineering packet must fail verification");
 
   let proposalBlocked = false;
@@ -161,6 +214,7 @@ const woven = weaveSignals({
       objective: "Evaluate a candidate while preserving uncertainty.",
       weave: uncertainWeave,
       successCriteria: ["Unknowns remain visible."],
+      intentEnvelope: sandboxEnvelope,
     },
     {
       autonomyLevel: 4,
@@ -171,8 +225,26 @@ const woven = weaveSignals({
   );
 
   assert(result.decision.gate === "ASK_USER", `expected ASK_USER, got ${result.decision.gate}`);
+  assert(result.engineering.intent === "RFI_REQUIRED", "uncertainty must return for interpretation");
   assert(result.engineering.requiresArchitectReview, "unknowns should force architect review");
   assert(result.engineering.unresolvedUnknowns.length > 0, "unknowns must remain in engineering packet");
+
+  let rfiBlocked = false;
+  try {
+    draftUntrustedSabProposal(result.engineering, "should-wait-for-rfi", {
+      type: "WRITE",
+      scope: "SANDBOX",
+      target: "sandbox.uncertain",
+      reversible: true,
+      dataSensitivity: "INTERNAL",
+      affectedRecords: 1,
+      estimatedCost: 0,
+      containsSecrets: false,
+    });
+  } catch (error) {
+    rfiBlocked = error instanceof Error && error.message === "engineering_packet_has_no_action_proposal";
+  }
+  assert(rfiBlocked, "RFI_REQUIRED packet must not emit a SAB proposal");
 }
 
 {
@@ -183,6 +255,7 @@ const woven = weaveSignals({
       objective: "Observe when no viable implementation exists.",
       weave: noCandidateWeave,
       successCriteria: ["Do not fabricate an action."],
+      intentEnvelope: sandboxEnvelope,
     },
     {
       autonomyLevel: 4,
@@ -225,11 +298,28 @@ const woven = weaveSignals({
       objective: "Reject invalid candidate metrics.",
       weave: invalidCandidateWeave,
       successCriteria: ["Non-finite risk cannot enter the architecture packet."],
+      intentEnvelope: sandboxEnvelope,
     });
   } catch (error) {
     rejected = error instanceof TypeError && error.message === "invalid_candidate_risk";
   }
   assert(rejected, "architect must fail closed on invalid candidate metrics");
+}
+
+{
+  let rejectedEnvelope = false;
+  try {
+    htArchitect({
+      packetId: "arch-invalid-envelope",
+      objective: "Reject an empty intent envelope.",
+      weave: woven,
+      successCriteria: ["At least one scope must be explicit."],
+      intentEnvelope: { ...sandboxEnvelope, allowedScopes: [] },
+    });
+  } catch (error) {
+    rejectedEnvelope = error instanceof TypeError && error.message === "allowed_scopes_required";
+  }
+  assert(rejectedEnvelope, "architect must reject an empty scope envelope");
 }
 
 console.log("architect-engineer strand tests passed");
