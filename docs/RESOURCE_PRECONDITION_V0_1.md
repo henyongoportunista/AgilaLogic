@@ -37,6 +37,8 @@ v0.1 requires a ResourcePrecondition before issuing a permit for:
 
 Other operation classes may use different anti-replay/idempotency mechanisms later and are not automatically forced into a resource-version model by this prototype.
 
+In particular, `PAYMENT` and `EXTERNAL_MESSAGE` often need transaction/idempotency keys, provider-side request deduplication, or delivery-state contracts rather than a mutable-resource ETag. v0.1 deliberately leaves those as separate future mechanisms instead of pretending one precondition model fits every consequence type.
+
 ## Contract
 
 The precondition binds:
