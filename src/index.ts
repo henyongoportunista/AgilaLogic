@@ -1,12 +1,15 @@
 export { decide } from "./orchestrator.js";
 export { GAGAMBA_WEAVE_VERSION, weaveSignals } from "./gagamba.js";
 export type {
+  GagambaAcceptedSignal,
   GagambaIntake,
   GagambaObservation,
   GagambaSignal,
   GagambaSignalKind,
   GagambaTrace,
   GagambaWeaveResult,
+  ProvenanceEnvelope,
+  ProvenanceSourceClass,
 } from "./gagamba.js";
 export {
   ARCHITECT_ENGINEER_PAIRS,
@@ -33,6 +36,38 @@ export type {
   MtEngineerResult,
   UntrustedSabProposalCandidate,
 } from "./strand.js";
+export {
+  TRUST_SPINE_VERSION,
+  assertPacketLifecycleFresh,
+  bindArchitectureLifecycle,
+  bindEngineeringLifecycle,
+  buildProvenanceLedger,
+  compareAdapterAttestation,
+  continueRfi,
+  expireRfi,
+  normalizePacketLifecycle,
+  openRfi,
+  resolveRfi,
+  verifyBoundArchitectureState,
+  verifyBoundEngineeringState,
+  verifyRfiLifecycle,
+} from "./trust.js";
+export type {
+  AdapterAttestation,
+  AdapterAttestationComparison,
+  AdapterMatchedProposalCandidate,
+  AttestedCost,
+  AttestedOperation,
+  BoundArchitectureState,
+  BoundEngineeringState,
+  OpenRfiInput,
+  PacketLifecycle,
+  ProvenanceLedger,
+  ProvenanceLedgerEntry,
+  RfiLifecycle,
+  RfiOwner,
+  RfiStatus,
+} from "./trust.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {
