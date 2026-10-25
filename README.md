@@ -22,6 +22,12 @@ The current model defines **7 Gagamba architect disciplines** and **7 Agila engi
 
 Only the first `HT → MT` strand is executable in the current branch. MT recomputes the Agila decision from the bound ArchitecturePacket instead of trusting a caller-supplied verdict. The Architecture IntentEnvelope constrains what engineering may propose; unresolved uncertainty returns `RFI_REQUIRED`; and any downstream operation metadata remains explicitly `UNATTESTED` until a future trusted adapter independently derives the concrete operation.
 
+The current operational form of the Unified Golden Axiom is:
+
+> **Unclear intent is unresolved state, not executable state.**
+
+This means ambiguity returns for interpretation instead of being silently converted into either action or passive `NO_ACTION`.
+
 The weave preserves facts separately from inference and prediction, keeps uncertainty visible, treats explicit human preference as a constraint, and withholds malformed or duplicate signals before they reach Agila evaluation.
 
 This is an operational translation only. It does **not** claim that the full Gagamba psychological/philosophical architecture, Active Inference, Free Energy minimization, autonomous persona rotation, neurobiological mechanisms, cryptographic identity, trusted adapter attestation, conformal risk control, TEE proof, or real execution are implemented.
@@ -29,6 +35,7 @@ This is an operational translation only. It does **not** claim that the full Gag
 See:
 
 - [`docs/UNIFIED_ARCHITECTURE.md`](docs/UNIFIED_ARCHITECTURE.md) — canonical technical topology and boundaries
+- [`docs/GOLDEN_AXIOM_ROUND2.md`](docs/GOLDEN_AXIOM_ROUND2.md) — verbatim human canon, red-team findings and calibrated executable translation
 - [`docs/GAGAMBA_AGILA_WEAVE.md`](docs/GAGAMBA_AGILA_WEAVE.md) — source-to-software weave contract
 - [`docs/ARCHITECT_ENGINEER_RED_TEAM.md`](docs/ARCHITECT_ENGINEER_RED_TEAM.md) — red-team rules and expansion discipline
 
