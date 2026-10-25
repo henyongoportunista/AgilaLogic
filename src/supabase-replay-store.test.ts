@@ -1,4 +1,5 @@
 import { weaveSignals } from "./gagamba.js";
+import { REPLAY_GUARD_VERSION } from "./replay.js";
 import {
   createSupabaseLifecycleRegistryStore,
 } from "./supabase-replay-store.js";
@@ -12,6 +13,20 @@ import { bindArchitectureLifecycle } from "./trust.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+async function rejectsWith(
+  fn: () => Promise<unknown>,
+  expected: string,
+  message: string,
+): Promise<void> {
+  let matched = false;
+  try {
+    await fn();
+  } catch (error) {
+    matched = error instanceof Error && error.message === expected;
+  }
+  assert(matched, message);
 }
 
 interface MockRow {
@@ -157,5 +172,39 @@ assert(
 );
 const reloaded = await store.load("supabase-context");
 assert(reloaded?.revision === 2, "mock external row must retain the latest revision");
+
+stored = {
+  context_id: "supabase-context",
+  revision: 3,
+  registry: { version: "forged-version", entries: [] },
+};
+await rejectsWith(
+  () => store.load("supabase-context"),
+  "lifecycle_store_registry_invalid",
+  "external row with unknown registry version must fail closed",
+);
+
+stored = {
+  context_id: "supabase-context",
+  revision: 3,
+  registry: {
+    version: REPLAY_GUARD_VERSION,
+    entries: [
+      {
+        lifecycleId: "cross-context-life",
+        kind: "ARCHITECTURE",
+        contextId: "other-context",
+        trustBinding: "fixture-binding",
+        issuedAt: "2026-10-25T08:00:00.000Z",
+        expiresAt: "2026-10-25T09:00:00.000Z",
+      },
+    ],
+  },
+};
+await rejectsWith(
+  () => store.load("supabase-context"),
+  "lifecycle_store_cross_context_entry",
+  "external row must not smuggle another context into the active registry",
+);
 
 console.log("Supabase replay-store adapter tests passed");
