@@ -69,6 +69,16 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  RFI_RESOLUTION_VERSION,
+  bindRfiResolution,
+  rfiResolutionToGagambaSignal,
+  verifyRfiResolutionArtifact,
+} from "./rfi-resolution.js";
+export type {
+  BindRfiResolutionInput,
+  RfiResolutionArtifact,
+} from "./rfi-resolution.js";
+export {
   LIFECYCLE_REGISTRY_VERSION,
   assertLifecycleActive,
   emptyLifecycleRegistry,
