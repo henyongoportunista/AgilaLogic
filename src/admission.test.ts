@@ -5,6 +5,11 @@ import {
   emptyOperatorAuthReplayState,
 } from "./auth.js";
 import { weaveSignals } from "./gagamba.js";
+import {
+  emptyLifecycleRegistry,
+  registerArchitectureState,
+  registerEngineeringState,
+} from "./lifecycle.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import {
@@ -116,6 +121,10 @@ const boundEngineering = bindEngineeringLifecycle(
   new Date("2026-10-25T03:32:00.000Z"),
 );
 
+let lifecycleRegistry = emptyLifecycleRegistry();
+lifecycleRegistry = registerArchitectureState(lifecycleRegistry, boundArchitecture);
+lifecycleRegistry = registerEngineeringState(lifecycleRegistry, boundEngineering);
+
 const expectation = draftUntrustedSabProposal(engineering, "admission-proposal", {
   type: "WRITE",
   scope: "SANDBOX",
@@ -213,6 +222,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -221,18 +231,23 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     now: admissionNow,
   });
 
-  assert(result.admitted, "matching source/state/role/operation contracts must be admitted structurally");
+  assert(result.admitted, "matching source/state/role/lifecycle/operation contracts must be admitted structurally");
   assert(
     result.candidate?.trust === "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
     "admission must not claim authenticated provenance, adapter identity, or execution authority",
   );
   assert(result.candidate?.proposal.target === "sandbox.preview", "admitted proposal must preserve target");
   assert(result.candidate?.evidence.operatorAuthBinding === null, "public admission must not invent auth evidence");
+  assert(
+    result.candidate?.evidence.lifecycleRegistryBinding === lifecycleRegistry.binding,
+    "admission evidence must preserve active lifecycle registry binding",
+  );
 }
 
 {
   const result = admitForSab({
     provenanceLedger,
+    lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext: verifiedNorthstarContext,
@@ -264,6 +279,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger: brokenLedger,
+    lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -297,6 +313,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger,
+    lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext: wrongRoleContext,
@@ -312,6 +329,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -332,6 +350,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -344,4 +363,38 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   assert(result.reasons.includes("engineering_state_not_fresh"), "stale engineering state must be explicit");
 }
 
-console.log("trust admission v0.3 tests passed");
+{
+  const replacementLifecycle: PacketLifecycle = {
+    lifecycleId: "admission-architecture-lifecycle-2",
+    contextId: architectureLifecycle.contextId,
+    issuedAt: "2026-10-25T03:35:00.000Z",
+    expiresAt: "2026-10-25T04:00:00.000Z",
+    policyVersion: SAB_POLICY_VERSION,
+    supersedesLifecycleId: architectureLifecycle.lifecycleId,
+  };
+  const replacementArchitecture = bindArchitectureLifecycle(
+    architecture,
+    replacementLifecycle,
+    new Date("2026-10-25T03:36:00.000Z"),
+  );
+  const supersededRegistry = registerArchitectureState(lifecycleRegistry, replacementArchitecture);
+
+  const result = admitForSab({
+    provenanceLedger,
+    lifecycleRegistry: supersededRegistry,
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    attestation,
+    now: new Date("2026-10-25T03:37:00.000Z"),
+  });
+
+  assert(!result.admitted, "superseded but still time-fresh architecture state must not be replayed");
+  assert(
+    result.reasons.includes("architecture_lifecycle_not_active"),
+    "superseded lifecycle replay must be explicit",
+  );
+}
+
+console.log("trust admission v0.4 tests passed");
