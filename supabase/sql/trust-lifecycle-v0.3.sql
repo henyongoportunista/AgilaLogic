@@ -4,6 +4,12 @@
 
 create schema if not exists henyong_internal;
 
+revoke all on schema henyong_internal from public;
+revoke all on schema henyong_internal from anon;
+revoke all on schema henyong_internal from authenticated;
+
+grant usage on schema henyong_internal to service_role;
+
 create table if not exists henyong_internal.lifecycle_registry (
   context_id text primary key,
   revision bigint not null check (revision >= 1),
@@ -15,6 +21,7 @@ create table if not exists henyong_internal.lifecycle_registry (
 revoke all on table henyong_internal.lifecycle_registry from public;
 revoke all on table henyong_internal.lifecycle_registry from anon;
 revoke all on table henyong_internal.lifecycle_registry from authenticated;
+grant select, insert, update on table henyong_internal.lifecycle_registry to service_role;
 
 -- Service-role-only read boundary. The internal table is not exposed directly.
 create or replace function public.henyong_lifecycle_registry_load(p_context_id text)
@@ -66,6 +73,48 @@ begin
 
   if p_registry is null or jsonb_typeof(p_registry) <> 'object' then
     raise exception 'invalid_registry_payload';
+  end if;
+
+  if (p_registry ->> 'version') is distinct from '2026-10-25.1' then
+    raise exception 'invalid_registry_version';
+  end if;
+
+  if not (p_registry ? 'entries')
+     or jsonb_typeof(p_registry -> 'entries') is distinct from 'array' then
+    raise exception 'invalid_registry_entries';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_registry -> 'entries') as entry
+    where jsonb_typeof(entry) <> 'object'
+       or (entry ->> 'contextId') is distinct from p_context_id
+       or coalesce(length(btrim(entry ->> 'lifecycleId')), 0) < 1
+       or coalesce(length(btrim(entry ->> 'trustBinding')), 0) < 1
+       or (entry ->> 'kind') not in ('ARCHITECTURE', 'ENGINEERING')
+  ) then
+    raise exception 'invalid_registry_entry';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_array_elements(p_registry -> 'entries') as entry
+    where entry ? 'supersededByLifecycleId'
+      and (entry ->> 'supersededByLifecycleId') = (entry ->> 'lifecycleId')
+  ) then
+    raise exception 'invalid_registry_self_supersession';
+  end if;
+
+  if exists (
+    select lifecycle_id
+    from (
+      select entry ->> 'lifecycleId' as lifecycle_id
+      from jsonb_array_elements(p_registry -> 'entries') as entry
+    ) as ids
+    group by lifecycle_id
+    having count(*) > 1
+  ) then
+    raise exception 'duplicate_registry_lifecycle';
   end if;
 
   if p_expected_revision is null then
