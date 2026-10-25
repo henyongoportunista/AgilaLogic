@@ -322,4 +322,53 @@ const woven = weaveSignals({
   assert(rejectedEnvelope, "architect must reject an empty scope envelope");
 }
 
+{
+  const duplicateCandidateWeave = weaveSignals({
+    signals: [{ id: "fact-duplicate-candidate", kind: "FACT", text: "Candidate identifiers must be unambiguous." }],
+    candidates: [candidate, { ...candidate, id: "  bounded-preview  " }],
+  });
+
+  let duplicateRejected = false;
+  try {
+    htArchitect({
+      packetId: "arch-duplicate-candidate",
+      objective: "Reject candidate identifier ambiguity.",
+      weave: duplicateCandidateWeave,
+      successCriteria: ["Every candidate has one unique normalized identifier."],
+      intentEnvelope: sandboxEnvelope,
+    });
+  } catch (error) {
+    duplicateRejected = error instanceof TypeError && error.message === "duplicate_candidate_id";
+  }
+  assert(duplicateRejected, "architect must reject duplicate normalized candidate identifiers");
+}
+
+{
+  const commonInput = {
+    packetId: "arch-canonical-envelope",
+    objective: "Bind semantically identical intent consistently.",
+    weave: woven,
+    successCriteria: ["Equivalent intent sets produce equivalent bindings."],
+  };
+
+  const forward = htArchitect({
+    ...commonInput,
+    intentEnvelope: sandboxEnvelope,
+  });
+  const reordered = htArchitect({
+    ...commonInput,
+    intentEnvelope: {
+      ...sandboxEnvelope,
+      allowedActionTypes: ["WRITE", "READ", "DRAFT"],
+      allowedScopes: ["SANDBOX", "LOCAL"],
+      allowedDataSensitivities: ["INTERNAL", "PUBLIC"],
+    },
+  });
+
+  assert(
+    forward.architectureBinding === reordered.architectureBinding,
+    "set-like intent order must not create meaningless binding drift",
+  );
+}
+
 console.log("architect-engineer strand tests passed");
