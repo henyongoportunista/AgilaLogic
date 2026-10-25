@@ -7,6 +7,7 @@ import {
   mtEngineer,
   runHtMtStrand,
   verifyArchitecturePacket,
+  verifyEngineeringPacket,
 } from "./strand.js";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -22,6 +23,12 @@ const candidate = {
   risk: 0.1,
   reversibility: 0.9,
   informationGain: 0.8,
+};
+
+const policy = {
+  autonomyLevel: 2,
+  riskTolerance: 0.3,
+  confidenceThreshold: 0.7,
 };
 
 const woven = weaveSignals({
@@ -75,17 +82,7 @@ const woven = weaveSignals({
 
   let failedClosed = false;
   try {
-    mtEngineer(
-      architecture,
-      {
-        gate: "DRAFT",
-        selected: { ...candidate, score: 0.8 },
-        reasons: [],
-        gaps: [],
-        resources: [],
-      },
-      "eng-tamper",
-    );
+    mtEngineer(architecture, policy, "eng-tamper");
   } catch (error) {
     failedClosed = error instanceof Error && error.message === "architecture_binding_mismatch";
   }
@@ -101,17 +98,14 @@ const woven = weaveSignals({
       successCriteria: ["Proposal is reviewable and remains non-executing."],
       nonGoals: ["No live deployment."],
     },
-    {
-      autonomyLevel: 2,
-      riskTolerance: 0.3,
-      confidenceThreshold: 0.7,
-    },
+    policy,
     "eng-run",
   );
 
   assert(result.decision.gate === "DRAFT", `expected DRAFT, got ${result.decision.gate}`);
   assert(result.engineering.engineer === "MT", "expected MT engineer");
   assert(result.engineering.intent === "PROPOSAL_ONLY", "engineering must remain proposal-only");
+  assert(verifyEngineeringPacket(result.engineering), "engineering binding should verify");
   assert(
     result.engineering.architectureBinding === result.architecture.architectureBinding,
     "engineering packet must bind back to architecture",
@@ -131,6 +125,26 @@ const woven = weaveSignals({
   assert(candidateProposal.trust === "UNATTESTED", "engineer metadata must remain untrusted");
   const sabDecision = evaluateProposal(candidateProposal.proposal);
   assert(sabDecision.route === "ALLOW_WITH_LOG", `expected policy preview ALLOW_WITH_LOG, got ${sabDecision.route}`);
+
+  result.engineering.preservedConstraints.push("silently changed");
+  assert(!verifyEngineeringPacket(result.engineering), "mutated engineering packet must fail verification");
+
+  let proposalBlocked = false;
+  try {
+    draftUntrustedSabProposal(result.engineering, "proposal-after-tamper", {
+      type: "WRITE",
+      scope: "SANDBOX",
+      target: "sandbox.preview",
+      reversible: true,
+      dataSensitivity: "INTERNAL",
+      affectedRecords: 1,
+      estimatedCost: 0,
+      containsSecrets: false,
+    });
+  } catch (error) {
+    proposalBlocked = error instanceof Error && error.message === "engineering_binding_mismatch";
+  }
+  assert(proposalBlocked, "tampered engineering packet must not emit a SAB proposal");
 }
 
 {
@@ -196,6 +210,26 @@ const woven = weaveSignals({
     blocked = error instanceof Error && error.message === "engineering_packet_has_no_action_proposal";
   }
   assert(blocked, "NO_ACTION engineering packet must not produce a SAB proposal");
+}
+
+{
+  const invalidCandidateWeave = weaveSignals({
+    signals: [{ id: "fact-invalid", kind: "FACT", text: "A malformed candidate arrived." }],
+    candidates: [{ ...candidate, risk: Number.NaN }],
+  });
+
+  let rejected = false;
+  try {
+    htArchitect({
+      packetId: "arch-invalid-candidate",
+      objective: "Reject invalid candidate metrics.",
+      weave: invalidCandidateWeave,
+      successCriteria: ["Non-finite risk cannot enter the architecture packet."],
+    });
+  } catch (error) {
+    rejected = error instanceof TypeError && error.message === "invalid_candidate_risk";
+  }
+  assert(rejected, "architect must fail closed on invalid candidate metrics");
 }
 
 console.log("architect-engineer strand tests passed");
