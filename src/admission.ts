@@ -9,6 +9,12 @@ import {
   verifyNorthstarContextPack,
   type NorthstarContextPack,
 } from "./northstar.js";
+import {
+  assertProvenanceAttestationFresh,
+  provenanceAttestationMatchesEntry,
+  verifyProvenanceAttestation,
+  type ProvenanceAttestation,
+} from "./provenance-attestation.js";
 import type { UntrustedSabProposalCandidate } from "./strand.js";
 import {
   TRUST_SPINE_VERSION,
@@ -20,12 +26,14 @@ import {
   type BoundArchitectureState,
   type BoundEngineeringState,
   type ProvenanceLedger,
+  type ProvenanceLedgerEntry,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.4" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.5" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
+  provenanceAttestations: ProvenanceAttestation[];
   lifecycleRegistry: LifecycleRegistry;
   architectureState: BoundArchitectureState;
   engineeringState: BoundEngineeringState;
@@ -46,6 +54,8 @@ export interface SabAdmissibleCandidate {
     northstarContextBinding: string;
     operatorAuthBinding: string | null;
     operatorAuthTrust: string | null;
+    provenanceAttestationIds: string[];
+    provenanceVerifierIds: string[];
     attestationId: string;
     adapterId: string;
     principal: string;
@@ -63,10 +73,44 @@ function addOnce(reasons: string[], reason: string): void {
   if (!reasons.includes(reason)) reasons.push(reason);
 }
 
+function validateFactAttestation(
+  entry: ProvenanceLedgerEntry,
+  attestations: ProvenanceAttestation[],
+  now: Date,
+  reasons: string[],
+  acceptedAttestations: ProvenanceAttestation[],
+): void {
+  const candidates = attestations.filter((attestation) => attestation.signalId === entry.signalId);
+  if (candidates.length === 0) {
+    addOnce(reasons, "architecture_fact_missing_provenance_attestation");
+    return;
+  }
+
+  let matched = false;
+  for (const candidate of candidates) {
+    if (!verifyProvenanceAttestation(candidate)) continue;
+    if (!provenanceAttestationMatchesEntry(candidate, entry)) continue;
+    try {
+      assertProvenanceAttestationFresh(candidate, now);
+    } catch {
+      continue;
+    }
+    matched = true;
+    if (!acceptedAttestations.some((existing) => existing.attestationId === candidate.attestationId)) {
+      acceptedAttestations.push(candidate);
+    }
+  }
+
+  if (!matched) addOnce(reasons, "architecture_fact_provenance_attestation_not_valid_and_fresh");
+}
+
 function validateFactProvenance(
   ledger: ProvenanceLedger,
+  attestations: ProvenanceAttestation[],
   architectureState: BoundArchitectureState,
+  now: Date,
   reasons: string[],
+  acceptedAttestations: ProvenanceAttestation[],
 ): void {
   if (
     typeof ledger !== "object" ||
@@ -78,6 +122,15 @@ function validateFactProvenance(
     addOnce(reasons, "invalid_provenance_ledger");
     return;
   }
+  if (!Array.isArray(attestations)) {
+    addOnce(reasons, "invalid_provenance_attestations");
+    return;
+  }
+
+  const attestationIds = attestations.map((attestation) => attestation.attestationId);
+  if (new Set(attestationIds).size !== attestationIds.length) {
+    addOnce(reasons, "duplicate_provenance_attestation_id");
+  }
 
   for (const fact of architectureState.architecture.facts) {
     const matches = ledger.entries.filter((entry) => entry.kind === "FACT" && entry.text === fact);
@@ -86,19 +139,41 @@ function validateFactProvenance(
       continue;
     }
 
-    const hasKnownOrigin = matches.some(
+    const knownOriginEntries = matches.filter(
       (entry) =>
         entry.provenance !== null &&
         entry.provenance.sourceClass !== "UNKNOWN_SOURCE" &&
-        entry.provenance.sourceClass !== "MODEL_DERIVED",
+        entry.provenance.sourceClass !== "MODEL_DERIVED" &&
+        !ledger.provenanceGapSignalIds.includes(entry.signalId),
     );
 
-    if (!hasKnownOrigin) {
+    if (knownOriginEntries.length === 0) {
       addOnce(reasons, "architecture_fact_unresolved_provenance");
+      if (matches.some((entry) => ledger.provenanceGapSignalIds.includes(entry.signalId))) {
+        addOnce(reasons, "architecture_fact_has_provenance_gap");
+      }
+      continue;
     }
 
-    if (matches.some((entry) => ledger.provenanceGapSignalIds.includes(entry.signalId))) {
-      addOnce(reasons, "architecture_fact_has_provenance_gap");
+    let attestedKnownOrigin = false;
+    for (const entry of knownOriginEntries) {
+      const reasonsBefore = reasons.length;
+      const acceptedBefore = acceptedAttestations.length;
+      validateFactAttestation(entry, attestations, now, reasons, acceptedAttestations);
+      if (acceptedAttestations.length > acceptedBefore) {
+        attestedKnownOrigin = true;
+      } else if (reasons.length > reasonsBefore && knownOriginEntries.length > 1) {
+        // A different same-text FACT entry may still provide a valid attested origin.
+        const newlyAdded = reasons.slice(reasonsBefore);
+        for (const reason of newlyAdded) {
+          const index = reasons.indexOf(reason);
+          if (index >= 0) reasons.splice(index, 1);
+        }
+      }
+    }
+
+    if (!attestedKnownOrigin) {
+      addOnce(reasons, "architecture_fact_provenance_not_attested");
     }
   }
 }
@@ -106,11 +181,12 @@ function validateFactProvenance(
 /**
  * Mandatory structural composition gate before a proposal may be presented to SAB.
  *
- * It does not authenticate the operator, adapter, provenance source, or model.
+ * It does not authenticate the operator, adapter, provenance verifier, source, or model.
  * It does not call SAB and does not grant execution authority.
  */
 export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
   const reasons: string[] = [];
+  const acceptedProvenanceAttestations: ProvenanceAttestation[] = [];
   const now = input.now ?? new Date();
 
   if (!Number.isFinite(now.getTime())) {
@@ -186,7 +262,14 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     addOnce(reasons, "proposal_engineering_packet_mismatch");
   }
 
-  validateFactProvenance(input.provenanceLedger, input.architectureState, reasons);
+  validateFactProvenance(
+    input.provenanceLedger,
+    input.provenanceAttestations,
+    input.architectureState,
+    now,
+    reasons,
+    acceptedProvenanceAttestations,
+  );
 
   if (!verifyNorthstarContextPack(input.northstarContext)) {
     addOnce(reasons, "northstar_context_invalid");
@@ -241,6 +324,8 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
         northstarContextBinding: input.northstarContext.contextBinding,
         operatorAuthBinding: input.northstarContext.operatorAuthBinding,
         operatorAuthTrust: input.northstarContext.operatorAuthTrust,
+        provenanceAttestationIds: acceptedProvenanceAttestations.map((entry) => entry.attestationId).sort(),
+        provenanceVerifierIds: [...new Set(acceptedProvenanceAttestations.map((entry) => entry.verifierId))].sort(),
         attestationId: operationComparison.candidate.attestationId,
         adapterId: operationComparison.candidate.adapterId,
         principal: input.northstarContext.principal,
