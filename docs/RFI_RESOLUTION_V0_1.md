@@ -91,9 +91,11 @@ kind: FACT
 provenance.sourceClass: HUMAN_STATED
 ```
 
-when the statement being represented is genuinely the human's own declaration (for example, a preference, authorization-relevant clarification, or first-person statement).
+when the fact being represented is specifically **that the human stated or decided something**. Examples include a preference, an operator clarification, or a first-person declaration.
 
-That still means **human-stated provenance**, not universal objective truth. Downstream architecture must preserve the meaning of the source.
+This does not convert the content of the statement into universal objective truth. For example, `HUMAN_STATED + FACT` can support “the operator stated X”; it does not by itself prove “X is externally true.”
+
+Authorization-relevant human statements also remain subject to the separate authenticated-principal and SAB boundaries. A human-stated RFI answer cannot create execution authority merely by being typed as FACT.
 
 ## Reinjection rule
 
@@ -108,6 +110,8 @@ It does not:
 - create an execution request.
 
 The signal must be included in a new Gagamba weave. A subsequent ArchitecturePacket must then be minted from that new weave if the clarified state materially changes architecture.
+
+If the new packet replaces an earlier lifecycle, the separate Lifecycle Registry contract must handle that supersession explicitly; RFI resolution does not silently supersede packet state by itself.
 
 ## Timing
 
