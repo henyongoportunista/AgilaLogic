@@ -261,6 +261,20 @@ const receipt = bindExecutionReceipt(permit, {
 {
   throwsWith(
     () => bindExecutionVerification(receipt, permit, {
+      verificationId: "same-executor-verifier",
+      verifierId: receipt.executorId,
+      status: "CONFIRMED",
+      observedOutcome: "SUCCEEDED",
+      verifiedAt: "2026-10-25T10:30:30.000Z",
+    }),
+    "execution_verifier_must_differ_from_executor",
+    "executor must not structurally self-verify its own receipt",
+  );
+}
+
+{
+  throwsWith(
+    () => bindExecutionVerification(receipt, permit, {
       verificationId: "false-confirmation",
       verifierId: "independent-verifier",
       status: "CONFIRMED",
@@ -283,6 +297,21 @@ const receipt = bindExecutionReceipt(permit, {
     }),
     "contradicted_verification_requires_different_observed_outcome",
     "CONTRADICTED must not be used when observation merely repeats the receipt",
+  );
+}
+
+{
+  const unknownReceipt = { ...receipt, outcome: "UNKNOWN" as const };
+  throwsWith(
+    () => bindExecutionVerification(unknownReceipt, permit, {
+      verificationId: "unknown-confirmation",
+      verifierId: "independent-verifier",
+      status: "CONFIRMED",
+      observedOutcome: "UNKNOWN",
+      verifiedAt: "2026-10-25T10:30:30.000Z",
+    }),
+    "execution_receipt_invalid",
+    "tampering a receipt outcome to UNKNOWN must fail before verification semantics are evaluated",
   );
 }
 
