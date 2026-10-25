@@ -97,6 +97,7 @@ It means the currently represented Source, State, Northstar role, proposal linka
 It does **not** mean:
 
 - provenance source identity is cryptographically authenticated;
+- the provenance ledger itself is tamper-evident or cryptographically authenticated;
 - the adapter identity is authenticated;
 - Node Alpha identity is authenticated;
 - the proposal is authorized;
@@ -104,6 +105,22 @@ It does **not** mean:
 - execution occurred;
 - replay protection is durable;
 - prompt injection is impossible.
+
+## Known provenance limitation
+
+Trust Admission v0.2 makes provenance **consequential**, but it does not yet make provenance **trusted**.
+
+The current provenance ledger is an in-memory structural artifact derived from the Gagamba weave. The admission gate validates that Architecture FACTs have matching ledger records and known source classes, but it does not cryptographically prove that the ledger itself was produced by a trusted observer or was not replaced by a caller.
+
+Therefore the current claim is:
+
+> **known provenance is required for admission**
+
+not:
+
+> **provenance is independently authenticated**
+
+Future source-attestation work may bind provenance to trusted tools, signed evidence, durable event identity, or another independently verifiable source mechanism. That remains outside v0.2.
 
 ## Current topology
 
@@ -162,6 +179,7 @@ The gate deliberately does not:
 - authenticate operators;
 - authenticate adapters;
 - authenticate provenance sources;
+- authenticate the provenance ledger itself;
 - connect real tools;
 - activate additional persona strands;
 - claim cryptographic integrity.
