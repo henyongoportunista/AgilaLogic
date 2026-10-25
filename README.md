@@ -10,6 +10,18 @@
 
 AgilaLogic is the conceptual and operational architecture behind **Henyong Oportunista**: a system for observing reality, filtering noise, identifying leverage, making bounded decisions, acting with explicit authority, verifying outcomes, and learning from evidence.
 
+## Experimental Gagamba × Agila weave
+
+A separate integration branch adds a deliberately narrow **Gagamba observation weave** in front of the existing Agila decision engine:
+
+`RAW SIGNALS → GAGAMBA WEAVE → AGILA DECIDE`
+
+The first seam preserves facts separately from inference and prediction, keeps uncertainty visible, treats explicit human preference as a constraint, and withholds malformed or duplicate signals before they reach Agila evaluation.
+
+This is an operational translation only. It does **not** claim that the full Gagamba psychological/philosophical architecture, Active Inference, Free Energy minimization, autonomous persona rotation, or neurobiological mechanisms are implemented.
+
+See [`docs/GAGAMBA_AGILA_WEAVE.md`](docs/GAGAMBA_AGILA_WEAVE.md).
+
 ## Executable prototype — Sovereign Scaffold
 
 **Capability ≠ Authority.**
