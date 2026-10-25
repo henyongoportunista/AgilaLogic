@@ -1,4 +1,5 @@
 import {
+  REPLAY_GUARD_VERSION,
   assertArchitectureStateActive,
   assertEngineeringStateActive,
   createLifecycleRegistry,
@@ -54,7 +55,23 @@ function cloneStored(stored: StoredLifecycleRegistry): StoredLifecycleRegistry {
   };
 }
 
-function assertStoredRegistry(
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function parseIso(value: string): number {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new Error("lifecycle_store_registry_invalid_time");
+  }
+  return parsed.getTime();
+}
+
+/**
+ * Validates data reloaded from an external replay store before it can influence
+ * active/superseded state. This is structural validation, not storage authentication.
+ */
+export function assertStoredLifecycleRegistry(
   stored: StoredLifecycleRegistry,
   expectedContextId: string,
 ): void {
@@ -67,11 +84,57 @@ function assertStoredRegistry(
   if (!Number.isInteger(stored.revision) || stored.revision < 1) {
     throw new Error("lifecycle_store_revision_invalid");
   }
-  if (!stored.registry || !Array.isArray(stored.registry.entries)) {
+  if (
+    !stored.registry ||
+    stored.registry.version !== REPLAY_GUARD_VERSION ||
+    !Array.isArray(stored.registry.entries)
+  ) {
     throw new Error("lifecycle_store_registry_invalid");
   }
-  if (stored.registry.entries.some((entry) => entry.contextId !== expectedContextId)) {
-    throw new Error("lifecycle_store_cross_context_entry");
+
+  const byId = new Map<string, (typeof stored.registry.entries)[number]>();
+  const supersededTargets = new Set<string>();
+
+  for (const entry of stored.registry.entries) {
+    if (!entry || typeof entry !== "object") throw new Error("lifecycle_store_registry_entry_invalid");
+    if (!isNonEmptyString(entry.lifecycleId) || !isNonEmptyString(entry.trustBinding)) {
+      throw new Error("lifecycle_store_registry_entry_invalid");
+    }
+    if (entry.kind !== "ARCHITECTURE" && entry.kind !== "ENGINEERING") {
+      throw new Error("lifecycle_store_registry_entry_invalid");
+    }
+    if (entry.contextId !== expectedContextId) {
+      throw new Error("lifecycle_store_cross_context_entry");
+    }
+    const issuedAt = parseIso(entry.issuedAt);
+    const expiresAt = parseIso(entry.expiresAt);
+    if (expiresAt <= issuedAt) throw new Error("lifecycle_store_registry_invalid_window");
+    if (byId.has(entry.lifecycleId)) throw new Error("lifecycle_store_duplicate_lifecycle");
+    byId.set(entry.lifecycleId, entry);
+
+    if (entry.supersededByLifecycleId !== undefined) {
+      if (!isNonEmptyString(entry.supersededByLifecycleId)) {
+        throw new Error("lifecycle_store_registry_entry_invalid");
+      }
+      if (entry.supersededByLifecycleId === entry.lifecycleId) {
+        throw new Error("lifecycle_store_self_supersession");
+      }
+      if (supersededTargets.has(entry.supersededByLifecycleId)) {
+        throw new Error("lifecycle_store_multiple_predecessors");
+      }
+      supersededTargets.add(entry.supersededByLifecycleId);
+    }
+  }
+
+  for (const entry of stored.registry.entries) {
+    if (entry.supersededByLifecycleId === undefined) continue;
+    const successor = byId.get(entry.supersededByLifecycleId);
+    if (!successor) throw new Error("lifecycle_store_missing_successor");
+    if (successor.kind !== entry.kind) throw new Error("lifecycle_store_supersession_kind_mismatch");
+    if (successor.contextId !== entry.contextId) throw new Error("lifecycle_store_supersession_context_mismatch");
+    if (new Date(successor.issuedAt).getTime() < new Date(entry.issuedAt).getTime()) {
+      throw new Error("lifecycle_store_supersession_time_reversal");
+    }
   }
 }
 
@@ -82,20 +145,17 @@ async function persistWithCas(
 ): Promise<StoredLifecycleRegistry> {
   for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
     const current = await store.load(contextId);
-    if (current) assertStoredRegistry(current, contextId);
+    if (current) assertStoredLifecycleRegistry(current, contextId);
 
     const baseRegistry = current ? cloneRegistry(current.registry) : createLifecycleRegistry();
     const nextRegistry = register(baseRegistry);
-    if (nextRegistry.entries.some((entry) => entry.contextId !== contextId)) {
-      throw new Error("lifecycle_store_cross_context_entry");
-    }
-
     const next: StoredLifecycleRegistry = {
       version: LIFECYCLE_STORE_VERSION,
       contextId,
       revision: (current?.revision ?? 0) + 1,
       registry: nextRegistry,
     };
+    assertStoredLifecycleRegistry(next, contextId);
 
     const swapped = await store.compareAndSwap(
       contextId,
@@ -136,7 +196,7 @@ export async function assertPersistedArchitectureStateActive(
 ): Promise<void> {
   const stored = await store.load(state.lifecycle.contextId);
   if (!stored) throw new Error("lifecycle_not_persisted");
-  assertStoredRegistry(stored, state.lifecycle.contextId);
+  assertStoredLifecycleRegistry(stored, state.lifecycle.contextId);
   assertArchitectureStateActive(stored.registry, state);
 }
 
@@ -146,7 +206,7 @@ export async function assertPersistedEngineeringStateActive(
 ): Promise<void> {
   const stored = await store.load(state.lifecycle.contextId);
   if (!stored) throw new Error("lifecycle_not_persisted");
-  assertStoredRegistry(stored, state.lifecycle.contextId);
+  assertStoredLifecycleRegistry(stored, state.lifecycle.contextId);
   assertEngineeringStateActive(stored.registry, state);
 }
 
@@ -162,7 +222,10 @@ export function createInMemoryLifecycleRegistryStore(): LifecycleRegistryStore {
 
     async load(contextId: string): Promise<StoredLifecycleRegistry | null> {
       const record = records.get(contextId);
-      return record ? cloneStored(record) : null;
+      if (!record) return null;
+      const cloned = cloneStored(record);
+      assertStoredLifecycleRegistry(cloned, contextId);
+      return cloned;
     },
 
     async compareAndSwap(
@@ -181,7 +244,7 @@ export function createInMemoryLifecycleRegistryStore(): LifecycleRegistryStore {
       if (next.revision !== (current?.revision ?? 0) + 1) {
         throw new Error("lifecycle_store_revision_jump");
       }
-      assertStoredRegistry(next, contextId);
+      assertStoredLifecycleRegistry(next, contextId);
       records.set(contextId, cloneStored(next));
       return true;
     },
