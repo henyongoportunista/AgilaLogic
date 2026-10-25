@@ -156,6 +156,17 @@ export type {
   TrustAdmissionResult,
 } from "./admission.js";
 export {
+  RESOURCE_PRECONDITION_VERSION,
+  assertResourcePreconditionFresh,
+  bindResourcePrecondition,
+  verifyResourcePrecondition,
+  verifyResourcePreconditionArtifact,
+} from "./resource-precondition.js";
+export type {
+  BindResourcePreconditionInput,
+  ResourcePrecondition,
+} from "./resource-precondition.js";
+export {
   EXECUTION_CONTRACT_VERSION,
   assertExecutionPermitFresh,
   bindExecutionReceipt,
