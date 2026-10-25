@@ -149,6 +149,26 @@ export type {
   VerifiedOperatorPrincipal,
   VerifiedPrincipalContext,
 } from "./external-auth.js";
+export {
+  RUNTIME_IDENTITY_VERSION,
+  assertResolvedRuntimeIdentityFresh,
+  assertVerifiedAdapterAttestationFresh,
+  bindAdapterAttestationToIdentity,
+  isResolvedRuntimeIdentity,
+  isVerifiedAdapterAttestation,
+  resolveRuntimeIdentity,
+} from "./runtime-identity.js";
+export type {
+  RejectedRuntimeIdentityResult,
+  ResolvedRuntimeIdentity,
+  RuntimeActorKind,
+  RuntimeIdentityAssurance,
+  RuntimeIdentityEvidence,
+  RuntimeIdentityVerification,
+  RuntimeIdentityVerifier,
+  VerifiedAdapterAttestation,
+  VerifiedRuntimeIdentityResult,
+} from "./runtime-identity.js";
 export { TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
 export type {
   SabAdmissibleCandidate,
