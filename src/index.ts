@@ -181,6 +181,16 @@ export type {
   ExecutionReceipt,
   IssueExecutionPermitInput,
 } from "./execution.js";
+export {
+  EXECUTION_VERIFICATION_VERSION,
+  bindExecutionVerification,
+  verifyExecutionVerification,
+} from "./execution-verification.js";
+export type {
+  BindExecutionVerificationInput,
+  ExecutionVerification,
+  ExecutionVerificationStatus,
+} from "./execution-verification.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {
