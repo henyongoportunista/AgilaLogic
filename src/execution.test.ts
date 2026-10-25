@@ -6,6 +6,11 @@ import {
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
+import {
+  createInMemoryLifecycleRegistryStore,
+  persistArchitectureState,
+  persistEngineeringState,
+} from "./replay-store.js";
 import { proposalBinding, SAB_POLICY_VERSION, type ApprovalRecord } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -23,6 +28,7 @@ import {
   type PacketLifecycle,
 } from "./trust.js";
 import {
+  assertExecutionPreconditionsUnchanged,
   assertResourceStateUnchanged,
   bindApprovalToNorthstar,
   createResourceStateSnapshot,
@@ -36,10 +42,14 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-function throwsWith(fn: () => unknown, expected: string, message: string): void {
+async function rejectsWith(
+  fn: () => Promise<unknown>,
+  expected: string,
+  message: string,
+): Promise<void> {
   let matched = false;
   try {
-    fn();
+    await fn();
   } catch (error) {
     matched = error instanceof Error && error.message === expected;
   }
@@ -235,8 +245,26 @@ const initialResourceState = createResourceStateSnapshot({
   expiresAt: "2026-10-25T06:45:00.000Z",
 });
 
-const prepared = preparePreExecution({
+const lifecycleStore = createInMemoryLifecycleRegistryStore();
+
+await rejectsWith(
+  () => preparePreExecution({
+    admission: admissionInput,
+    lifecycleStore,
+    resourceState: initialResourceState,
+    sessionBoundApproval: sessionApproval,
+    now: new Date("2026-10-25T06:35:00.000Z"),
+  }),
+  "lifecycle_not_persisted",
+  "unpersisted architecture/engineering state must never reach pre-execution",
+);
+
+await persistArchitectureState(lifecycleStore, boundArchitecture);
+await persistEngineeringState(lifecycleStore, boundEngineering);
+
+const prepared = await preparePreExecution({
   admission: admissionInput,
+  lifecycleStore,
   resourceState: initialResourceState,
   sessionBoundApproval: sessionApproval,
   now: new Date("2026-10-25T06:35:00.000Z"),
@@ -249,18 +277,19 @@ assert(
 assert(verifyPreExecutionRequest(prepared), "prepared request must verify");
 assert(prepared.sabRoute === "REQUIRE_HUMAN_APPROVAL", "sensitive staging write must retain human approval route");
 assert(prepared.expiresAt === approval.expiresAt, "shortest trust window must bound pre-execution lifetime");
+assert(prepared.architectureTrustBinding === boundArchitecture.trustBinding, "pre-execution must bind exact architecture state");
+assert(prepared.engineeringTrustBinding === boundEngineering.trustBinding, "pre-execution must bind exact engineering state");
 
-{
-  throwsWith(
-    () => preparePreExecution({
-      admission: admissionInput,
-      resourceState: initialResourceState,
-      now: new Date("2026-10-25T06:35:00.000Z"),
-    }),
-    "human_approval_required",
-    "approval-required proposal must not prepare without session-bound approval",
-  );
-}
+await rejectsWith(
+  () => preparePreExecution({
+    admission: admissionInput,
+    lifecycleStore,
+    resourceState: initialResourceState,
+    now: new Date("2026-10-25T06:35:00.000Z"),
+  }),
+  "human_approval_required",
+  "approval-required proposal must not prepare without session-bound approval",
+);
 
 const unchangedResourceState = createResourceStateSnapshot({
   adapterId: "staging-adapter-contract",
@@ -270,6 +299,14 @@ const unchangedResourceState = createResourceStateSnapshot({
   expiresAt: "2026-10-25T06:39:30.000Z",
 });
 assertResourceStateUnchanged(prepared, unchangedResourceState, new Date("2026-10-25T06:37:00.000Z"));
+await assertExecutionPreconditionsUnchanged({
+  request: prepared,
+  lifecycleStore,
+  architectureState: boundArchitecture,
+  engineeringState: boundEngineering,
+  currentResourceState: unchangedResourceState,
+  now: new Date("2026-10-25T06:37:00.000Z"),
+});
 
 {
   const changedResourceState = createResourceStateSnapshot({
@@ -279,11 +316,13 @@ assertResourceStateUnchanged(prepared, unchangedResourceState, new Date("2026-10
     observedAt: "2026-10-25T06:36:00.000Z",
     expiresAt: "2026-10-25T06:39:30.000Z",
   });
-  throwsWith(
-    () => assertResourceStateUnchanged(prepared, changedResourceState, new Date("2026-10-25T06:37:00.000Z")),
-    "resource_state_changed_since_preparation",
-    "changed resource token must fail closed before adapter execution",
-  );
+  let changedRejected = false;
+  try {
+    assertResourceStateUnchanged(prepared, changedResourceState, new Date("2026-10-25T06:37:00.000Z"));
+  } catch (error) {
+    changedRejected = error instanceof Error && error.message === "resource_state_changed_since_preparation";
+  }
+  assert(changedRejected, "changed resource token must fail closed before adapter execution");
 }
 
 {
@@ -292,9 +331,10 @@ assertResourceStateUnchanged(prepared, unchangedResourceState, new Date("2026-10
     entries: admissionInput.provenanceLedger.entries.map((entry) => ({ ...entry, provenance: null })),
     provenanceGapSignalIds: ["execution-fact-1"],
   };
-  throwsWith(
+  await rejectsWith(
     () => preparePreExecution({
       admission: { ...admissionInput, provenanceLedger: brokenLedger },
+      lifecycleStore,
       resourceState: initialResourceState,
       sessionBoundApproval: sessionApproval,
       now: new Date("2026-10-25T06:35:00.000Z"),
@@ -320,4 +360,31 @@ assert(verifyExecutionReceipt(receipt), "receipt binding must verify");
   assert(!verifyExecutionReceipt(tampered), "mutated receipt must fail deterministic binding verification");
 }
 
-console.log("pre-execution and receipt contract tests passed");
+const supersedingArchitecture = bindArchitectureLifecycle(
+  architecture,
+  {
+    lifecycleId: "execution-architecture-life-2",
+    contextId: "execution-context",
+    issuedAt: "2026-10-25T06:38:00.000Z",
+    expiresAt: "2026-10-25T07:00:00.000Z",
+    policyVersion: SAB_POLICY_VERSION,
+    supersedesLifecycleId: architectureLifecycle.lifecycleId,
+  },
+  new Date("2026-10-25T06:38:30.000Z"),
+);
+await persistArchitectureState(lifecycleStore, supersedingArchitecture);
+
+await rejectsWith(
+  () => assertExecutionPreconditionsUnchanged({
+    request: prepared,
+    lifecycleStore,
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    currentResourceState: unchangedResourceState,
+    now: new Date("2026-10-25T06:39:00.000Z"),
+  }),
+  "lifecycle_superseded",
+  "lifecycle superseded after preparation must fail the final execution precondition check",
+);
+
+console.log("pre-execution, replay, TOCTOU, and receipt contract tests passed");
