@@ -1,6 +1,8 @@
 # ROEM Phase 1 — Refinement Audit
 
-Status: **applied on `feat/gagamba-agila-weave`; exact-head CI pending at time of authoring**
+Status: **applied on `feat/gagamba-agila-weave`; release remains draft/unmerged**
+
+Exact-head verification evidence is recorded in PR #2 after each final source revision. This document describes the refinement contract; it is not itself CI evidence or execution authority.
 
 Scope: Refinement only. No new model agents, no new external integrations, no executor, no deployment, and no authority expansion.
 
@@ -85,15 +87,15 @@ The existing precedence remains:
 
 ## Exit criteria
 
-Phase 1 is complete only when the exact final head passes:
+A Phase-1 source revision is considered verified only when its exact head passes:
 
 - TypeScript typecheck;
 - all existing unit/adversarial tests;
-- new Gagamba invalid-kind regression test;
-- new duplicate-candidate regression test;
-- new IntentEnvelope canonical-order regression test;
+- Gagamba invalid-kind regression test;
+- duplicate-candidate regression test;
+- IntentEnvelope canonical-order regression test;
 - dependency audit;
 - portfolio accessibility regression contract;
 - Sovereign Scaffold adversarial HTTP/API smoke test.
 
-Until exact-head verification is green, status remains **REFINEMENT APPLIED / VERIFICATION PENDING**.
+The authoritative exact SHA and workflow run belong in PR #2 because any documentation edit changes the branch head.
