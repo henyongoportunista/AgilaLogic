@@ -9,6 +9,7 @@ const MAX_ID_LENGTH = 200;
 const MAX_REF_LENGTH = 4000;
 const MAX_AUTH_WINDOW_MS = 24 * 60 * 60_000;
 const AUTH_EVIDENCE_FIELDS = new Set(["version", "providerId", "sessionHandle", "verificationRef"]);
+const externallyVerifiedPrincipalContexts = new WeakSet<object>();
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -93,6 +94,16 @@ export interface VerifiedPrincipalContext {
   principalContext: PrincipalContext;
 }
 
+/**
+ * Process-local runtime stamp. Northstar uses this to reject caller-fabricated
+ * VERIFIED_* PrincipalContext objects that merely copy the right strings.
+ * The stamp is intentionally non-serializable: a deserialized session must be
+ * reverified by the external auth boundary before private operator context is compiled.
+ */
+export function isExternallyVerifiedPrincipalContext(context: PrincipalContext): boolean {
+  return typeof context === "object" && context !== null && externallyVerifiedPrincipalContexts.has(context);
+}
+
 export function createPublicPrincipalContext(
   sessionId: string,
   issuedAt: string,
@@ -112,8 +123,8 @@ export function createPublicPrincipalContext(
 }
 
 /**
- * Resolves an externally verified session into the only PrincipalContext shape
- * that may carry VERIFIED_SAL or VERIFIED_BJORN into Northstar.
+ * Resolves an externally verified session into the only PrincipalContext object
+ * that may carry VERIFIED_SAL or VERIFIED_BJORN into Northstar in this process.
  *
  * This function does not authenticate credentials itself. It requires a trusted
  * verifier implementation and fails closed on provider mismatch, rejection,
@@ -179,17 +190,20 @@ export async function resolveVerifiedPrincipalContext(
     throw new Error("auth_assurance_invalid");
   }
 
+  const principalContext: PrincipalContext = {
+    principal: result.principal,
+    verification: "EXTERNAL_AUTH",
+    sessionId,
+    issuedAt: authenticatedAt.toISOString(),
+    expiresAt: expiresAt.toISOString(),
+  };
+  externallyVerifiedPrincipalContexts.add(principalContext);
+
   return {
     version: EXTERNAL_AUTH_BOUNDARY_VERSION,
     assurance: result.assurance,
     providerId,
     subjectRef,
-    principalContext: {
-      principal: result.principal,
-      verification: "EXTERNAL_AUTH",
-      sessionId,
-      issuedAt: authenticatedAt.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-    },
+    principalContext,
   };
 }
