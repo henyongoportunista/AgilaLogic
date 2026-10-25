@@ -15,7 +15,7 @@ import type {
   RankedCandidate,
 } from "./types.js";
 
-export const ARCHITECT_ENGINEER_STRAND_VERSION = "2026-10-25.4" as const;
+export const ARCHITECT_ENGINEER_STRAND_VERSION = "2026-10-25.5" as const;
 
 export type GagambaArchitectId = "HT" | "PH" | "TM" | "MG" | "KP" | "MM" | "EI";
 export type AgilaEngineerId = "MT" | "MB" | "KM" | "HO" | "UO" | "UM" | "IW";
@@ -43,6 +43,10 @@ export const ARCHITECT_ENGINEER_PAIRS: readonly ArchitectEngineerPair[] = [
 /**
  * Machine-checkable strategic intent. This constrains what an engineer may
  * propose; it is not authentication, security attestation, or SAB policy.
+ *
+ * maxEstimatedCost remains a prototype scalar only. Currency/unit semantics
+ * are not established yet, so it must not be presented as a production
+ * financial-control guarantee.
  */
 export interface ArchitectureIntentEnvelope {
   allowedActionTypes: ActionType[];
@@ -174,8 +178,8 @@ function validUnit(value: number): boolean {
   return Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function validateCandidate(candidate: CandidateAction): void {
-  boundedText(candidate.id, MAX_PACKET_ID_LENGTH, "candidate_id");
+function validateCandidate(candidate: CandidateAction): CandidateAction {
+  const id = boundedText(candidate.id, MAX_PACKET_ID_LENGTH, "candidate_id");
   if (!validUnit(candidate.value)) throw new TypeError("invalid_candidate_value");
   if (!validUnit(candidate.timing)) throw new TypeError("invalid_candidate_timing");
   if (!validUnit(candidate.confidence)) throw new TypeError("invalid_candidate_confidence");
@@ -185,6 +189,19 @@ function validateCandidate(candidate: CandidateAction): void {
   if (candidate.informationGain !== undefined && !validUnit(candidate.informationGain)) {
     throw new TypeError("invalid_candidate_information_gain");
   }
+
+  return { ...candidate, id };
+}
+
+function validateCandidates(candidates: CandidateAction[]): CandidateAction[] {
+  const seenIds = new Set<string>();
+
+  return candidates.map((candidate) => {
+    const validated = validateCandidate(candidate);
+    if (seenIds.has(validated.id)) throw new TypeError("duplicate_candidate_id");
+    seenIds.add(validated.id);
+    return validated;
+  });
 }
 
 function uniqueKnownValues<T extends string>(
@@ -193,7 +210,7 @@ function uniqueKnownValues<T extends string>(
   label: string,
 ): T[] {
   if (!Array.isArray(values) || values.length === 0) throw new TypeError(`${label}_required`);
-  const normalized = [...new Set(values)];
+  const normalized = [...new Set(values)].sort();
   if (normalized.some((value) => !allowed.has(value))) throw new TypeError(`invalid_${label}`);
   return normalized;
 }
@@ -355,7 +372,7 @@ export function htArchitect(input: HtArchitectureInput): ArchitecturePacket {
   if (successCriteria.length === 0) throw new TypeError("success_criteria_required");
 
   const observation = input.weave.observation;
-  for (const candidate of observation.candidates) validateCandidate(candidate);
+  const candidates = validateCandidates(observation.candidates);
   const intentEnvelope = validateIntentEnvelope(input.intentEnvelope);
 
   const payload: Omit<ArchitecturePacket, "architectureBinding"> = {
@@ -372,7 +389,7 @@ export function htArchitect(input: HtArchitectureInput): ArchitecturePacket {
     humanPreferences: [...observation.preferences],
     successCriteria,
     nonGoals: boundedList(input.nonGoals ?? [], "non_goals"),
-    candidates: observation.candidates.map(copyCandidate),
+    candidates,
     intentEnvelope,
     sourceWeaveVersion: input.weave.trace.version,
   };
