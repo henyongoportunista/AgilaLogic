@@ -1,6 +1,15 @@
-import assert from "node:assert/strict";
 import { weaveSignals } from "./gagamba.js";
 import { decide } from "./orchestrator.js";
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function assertDeepEqual(actual: unknown, expected: unknown, message: string): void {
+  const actualJson = JSON.stringify(actual);
+  const expectedJson = JSON.stringify(expected);
+  assert(actualJson === expectedJson, `${message}: expected ${expectedJson}, got ${actualJson}`);
+}
 
 const candidate = {
   id: "candidate-a",
@@ -24,11 +33,11 @@ const candidate = {
     candidates: [candidate],
   });
 
-  assert.deepEqual(woven.observation.facts, ["Customer asked for a reversible sandbox preview."]);
-  assert.deepEqual(woven.observation.unknowns, ["Production credentials are not connected."]);
-  assert.deepEqual(woven.observation.resources, ["Local policy lab"]);
-  assert.deepEqual(woven.observation.constraints, ["No external mutation"]);
-  assert.equal(woven.trace.withheldSignalIds.length, 0);
+  assertDeepEqual(woven.observation.facts, ["Customer asked for a reversible sandbox preview."], "facts");
+  assertDeepEqual(woven.observation.unknowns, ["Production credentials are not connected."], "unknowns");
+  assertDeepEqual(woven.observation.resources, ["Local policy lab"], "resources");
+  assertDeepEqual(woven.observation.constraints, ["No external mutation"], "constraints");
+  assert(woven.trace.withheldSignalIds.length === 0, "expected no withheld signals");
 }
 
 {
@@ -41,19 +50,26 @@ const candidate = {
     candidates: [candidate],
   });
 
-  assert.equal(woven.observation.facts.length, 0);
-  assert.deepEqual(woven.observation.inferences, ["This route is probably safe."]);
-  assert.deepEqual(woven.observation.predictions, ["The adapter will succeed."]);
-  assert.ok(woven.observation.unknowns.every((item) => item.includes("requires_validation")));
-  assert.deepEqual(woven.observation.constraints, ["human_preference: Prefer the smallest reversible action."]);
+  assert(woven.observation.facts.length === 0, "inference/prediction must not become facts");
+  assertDeepEqual(woven.observation.inferences, ["This route is probably safe."], "inferences");
+  assertDeepEqual(woven.observation.predictions, ["The adapter will succeed."], "predictions");
+  assert(
+    woven.observation.unknowns.every((item) => item.includes("requires_validation")),
+    "inference/prediction should remain validation gaps",
+  );
+  assertDeepEqual(
+    woven.observation.constraints,
+    ["human_preference: Prefer the smallest reversible action."],
+    "preference constraint",
+  );
 
   const decision = decide(woven.observation, {
     autonomyLevel: 3,
     riskTolerance: 0.5,
     confidenceThreshold: 0.7,
   });
-  assert.equal(decision.gate, "ASK_USER");
-  assert.ok(decision.reasons.includes("important_unknowns_present"));
+  assert(decision.gate === "ASK_USER", `expected ASK_USER, got ${decision.gate}`);
+  assert(decision.reasons.includes("important_unknowns_present"), "expected unknowns gate");
 }
 
 {
@@ -68,11 +84,21 @@ const candidate = {
     candidates: [candidate],
   });
 
-  assert.deepEqual(woven.trace.acceptedSignalIds, ["dup", "same-1"]);
-  assert.deepEqual(woven.trace.withheldSignalIds, ["dup", "same-2", "bad-confidence"]);
-  assert.ok(woven.trace.reasons.includes("duplicate_signal_id"));
-  assert.ok(woven.trace.reasons.includes("duplicate_signal_content"));
-  assert.ok(woven.trace.reasons.includes("invalid_signal_confidence"));
+  assertDeepEqual(woven.trace.acceptedSignalIds, ["dup", "same-1"], "accepted signal ids");
+  assertDeepEqual(
+    woven.trace.withheldSignalIds,
+    ["dup", "same-2", "bad-confidence"],
+    "withheld signal ids",
+  );
+  assert(woven.trace.reasons.includes("duplicate_signal_id"), "expected duplicate id reason");
+  assert(
+    woven.trace.reasons.includes("duplicate_signal_content"),
+    "expected duplicate content reason",
+  );
+  assert(
+    woven.trace.reasons.includes("invalid_signal_confidence"),
+    "expected invalid confidence reason",
+  );
 }
 
 console.log("gagamba tests passed");
