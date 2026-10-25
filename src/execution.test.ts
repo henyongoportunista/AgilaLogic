@@ -17,7 +17,6 @@ import { bindProvenanceAttestation } from "./provenance-attestation.js";
 import {
   SAB_POLICY_VERSION,
   proposalBinding,
-  type ActionProposal,
   type ApprovalRecord,
 } from "./sab.js";
 import {
@@ -226,16 +225,18 @@ const sandboxCandidate = makeCandidate("sandbox", sandboxMetadata, sandboxEnvelo
   assert(sandboxCandidate.validUntil === "2026-10-25T09:50:00.000Z", "admission validity must use earliest dependency expiry");
   const permit = issueExecutionPermit({
     permitId: "permit-sandbox",
+    executionId: "execution-sandbox",
     candidate: sandboxCandidate,
     now: baseNow,
   });
+  assert(permit.executionId === "execution-sandbox", "permit must bind one intended execution identity");
   assert(permit.sabRoute === "ALLOW_WITH_LOG", "bounded sandbox write should retain SAB route");
   assert(verifyExecutionPermit(permit), "issued execution permit must verify structurally");
   assertExecutionPermitFresh(permit, new Date("2026-10-25T09:31:00.000Z"));
 
   const receipt = bindExecutionReceipt(permit, {
     receiptId: "receipt-sandbox",
-    executionId: "execution-sandbox",
+    executionId: permit.executionId,
     executorId: "future-n8n-adapter",
     reportedProposal: { ...permit.proposal },
     startedAt: "2026-10-25T09:31:00.000Z",
@@ -251,8 +252,22 @@ const sandboxCandidate = makeCandidate("sandbox", sandboxMetadata, sandboxEnvelo
 
   throwsWith(
     () => bindExecutionReceipt(permit, {
+      receiptId: "receipt-wrong-execution",
+      executionId: "different-execution-id",
+      executorId: "future-n8n-adapter",
+      reportedProposal: { ...permit.proposal },
+      startedAt: "2026-10-25T09:31:00.000Z",
+      completedAt: "2026-10-25T09:31:05.000Z",
+      outcome: "UNKNOWN",
+    }),
+    "execution_id_mismatch",
+    "one permit must not be reused under a different execution identity",
+  );
+
+  throwsWith(
+    () => bindExecutionReceipt(permit, {
       receiptId: "receipt-mismatch",
-      executionId: "execution-mismatch",
+      executionId: permit.executionId,
       executorId: "future-n8n-adapter",
       reportedProposal: { ...permit.proposal, target: "production.other_target" },
       startedAt: "2026-10-25T09:31:00.000Z",
@@ -266,7 +281,7 @@ const sandboxCandidate = makeCandidate("sandbox", sandboxMetadata, sandboxEnvelo
   throwsWith(
     () => bindExecutionReceipt(permit, {
       receiptId: "receipt-late-start",
-      executionId: "execution-late-start",
+      executionId: permit.executionId,
       executorId: "future-n8n-adapter",
       reportedProposal: { ...permit.proposal },
       startedAt: permit.expiresAt,
@@ -303,6 +318,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
   throwsWith(
     () => issueExecutionPermit({
       permitId: "permit-production-no-approval",
+      executionId: "execution-production-no-approval",
       candidate: productionCandidate,
       now: baseNow,
     }),
@@ -321,6 +337,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
   };
   const permit = issueExecutionPermit({
     permitId: "permit-production-approved",
+    executionId: "execution-production-approved",
     candidate: productionCandidate,
     approval,
     now: baseNow,
@@ -337,6 +354,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
   throwsWith(
     () => issueExecutionPermit({
       permitId: "permit-mutated-admission",
+      executionId: "execution-mutated-admission",
       candidate: mutatedCandidate,
       now: baseNow,
     }),
@@ -349,6 +367,7 @@ const productionCandidate = makeCandidate("production", productionMetadata, prod
   throwsWith(
     () => issueExecutionPermit({
       permitId: "permit-expired-admission",
+      executionId: "execution-expired-admission",
       candidate: sandboxCandidate,
       now: new Date(sandboxCandidate.validUntil),
     }),
