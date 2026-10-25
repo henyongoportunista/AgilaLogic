@@ -1,5 +1,10 @@
 import type { ActionProposal } from "./sab.js";
 import {
+  assertLifecycleActive,
+  verifyLifecycleRegistry,
+  type LifecycleRegistry,
+} from "./lifecycle.js";
+import {
   assertNorthstarContextFresh,
   verifyNorthstarContextPack,
   type NorthstarContextPack,
@@ -17,10 +22,11 @@ import {
   type ProvenanceLedger,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.3" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.4" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
+  lifecycleRegistry: LifecycleRegistry;
   architectureState: BoundArchitectureState;
   engineeringState: BoundEngineeringState;
   northstarContext: NorthstarContextPack;
@@ -36,6 +42,7 @@ export interface SabAdmissibleCandidate {
   evidence: {
     architectureTrustBinding: string;
     engineeringTrustBinding: string;
+    lifecycleRegistryBinding: string;
     northstarContextBinding: string;
     operatorAuthBinding: string | null;
     operatorAuthTrust: string | null;
@@ -110,6 +117,10 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     return { admitted: false, reasons: ["invalid_now"] };
   }
 
+  if (!verifyLifecycleRegistry(input.lifecycleRegistry)) {
+    addOnce(reasons, "lifecycle_registry_invalid");
+  }
+
   if (!verifyBoundArchitectureState(input.architectureState)) {
     addOnce(reasons, "architecture_state_invalid");
   } else {
@@ -117,6 +128,16 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
       assertPacketLifecycleFresh(input.architectureState.lifecycle, now);
     } catch {
       addOnce(reasons, "architecture_state_not_fresh");
+    }
+    try {
+      assertLifecycleActive(
+        input.lifecycleRegistry,
+        "ARCHITECTURE",
+        input.architectureState.lifecycle,
+        input.architectureState.trustBinding,
+      );
+    } catch {
+      addOnce(reasons, "architecture_lifecycle_not_active");
     }
   }
 
@@ -127,6 +148,16 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
       assertPacketLifecycleFresh(input.engineeringState.lifecycle, now);
     } catch {
       addOnce(reasons, "engineering_state_not_fresh");
+    }
+    try {
+      assertLifecycleActive(
+        input.lifecycleRegistry,
+        "ENGINEERING",
+        input.engineeringState.lifecycle,
+        input.engineeringState.trustBinding,
+      );
+    } catch {
+      addOnce(reasons, "engineering_lifecycle_not_active");
     }
   }
 
@@ -198,7 +229,7 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
 
   return {
     admitted: true,
-    reasons: ["source_state_role_and_operation_contracts_structurally_match"],
+    reasons: ["source_state_role_lifecycle_and_operation_contracts_structurally_match"],
     candidate: {
       trust: "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
       admissionVersion: TRUST_ADMISSION_VERSION,
@@ -206,6 +237,7 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
       evidence: {
         architectureTrustBinding: input.architectureState.trustBinding,
         engineeringTrustBinding: input.engineeringState.trustBinding,
+        lifecycleRegistryBinding: input.lifecycleRegistry.binding,
         northstarContextBinding: input.northstarContext.contextBinding,
         operatorAuthBinding: input.northstarContext.operatorAuthBinding,
         operatorAuthTrust: input.northstarContext.operatorAuthTrust,

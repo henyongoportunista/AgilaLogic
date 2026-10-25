@@ -69,6 +69,20 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  LIFECYCLE_REGISTRY_VERSION,
+  assertLifecycleActive,
+  emptyLifecycleRegistry,
+  registerArchitectureState,
+  registerEngineeringState,
+  verifyLifecycleRegistry,
+} from "./lifecycle.js";
+export type {
+  LifecycleKind,
+  LifecycleRegistry,
+  LifecycleRegistryEntry,
+  LifecycleRegistryStatus,
+} from "./lifecycle.js";
+export {
   OPERATOR_AUTH_VERSION,
   assertOperatorAuthAssertionFresh,
   assertVerifiedOperatorSessionFresh,
