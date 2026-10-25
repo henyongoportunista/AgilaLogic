@@ -20,6 +20,34 @@ The fourteen roles are **bounded specialist disciplines**, not fourteen always-o
 
 Pairing is a routing default. It is not identity, permission, credential scope, or a requirement that all fourteen roles run.
 
+## Round-2 Golden Axiom red-team invariant
+
+Human canon:
+
+> **"Ignorance happens when you fail express your own thoughts clearly enough to be understood by anyone, and it only means you haven't really met yourself inside out"**
+
+The literal sentence is preserved as human architecture, but the executable system uses the narrower rule:
+
+> **Unclear intent is unresolved state, not executable state.**
+
+Red-team calibration:
+
+- misunderstanding does not by itself prove ignorance;
+- linguistic fluency does not prove self-knowledge;
+- clarity is not verbosity;
+- the receiving layer may share responsibility for clarification;
+- missing context/evidence must remain explicit rather than being filled with confidence.
+
+Control-flow consequence:
+
+> **Ambiguity outranks passive inactivity.**
+
+If unresolved interpretation exists, the engineer returns `RFI_REQUIRED` even when no candidate is selected. A hard `REJECT` remains a valid stop condition.
+
+This prevents the system from converting “I do not understand enough yet” into “there is definitely nothing to do.”
+
+See [`GOLDEN_AXIOM_ROUND2.md`](GOLDEN_AXIOM_ROUND2.md) for the full audit.
+
 ## Refined topology
 
 ```text
@@ -75,7 +103,7 @@ The IntentEnvelope is architecture intent, **not security attestation**.
 
 ### Unknown must remain unknown
 
-If the bound architecture contains unresolved unknowns or Agila returns `ASK_USER`, the engineering intent becomes `RFI_REQUIRED`.
+If the bound architecture contains unresolved unknowns or Agila returns `ASK_USER`, the engineering intent becomes `RFI_REQUIRED` unless an explicit hard rejection already resolves the action path.
 
 `RFI_REQUIRED` cannot emit an action proposal.
 
@@ -137,10 +165,11 @@ Implemented protections:
 5. MT may only select a candidate that matches a candidate bound by HT.
 6. EngineeringPacket preserves the IntentEnvelope and has its own deterministic non-cryptographic binding.
 7. Architecture or engineering packet drift fails closed in the prototype.
-8. unresolved uncertainty returns `RFI_REQUIRED` and cannot draft a proposal.
-9. `NO_ACTION` cannot draft a proposal.
-10. a proposal outside architected intent fails before SAB preview.
-11. proposal metadata emitted from engineering remains explicitly `UNATTESTED`.
+8. unresolved uncertainty returns `RFI_REQUIRED` before passive `NO_ACTION` and cannot draft a proposal.
+9. clear absence of a viable candidate may return `NO_ACTION` without fabricating an RFI.
+10. `NO_ACTION` cannot draft a proposal.
+11. a proposal outside architected intent fails before SAB preview.
+12. proposal metadata emitted from engineering remains explicitly `UNATTESTED`.
 
 The packet bindings are drift checks. They are **not** cryptographic signatures, authenticated identity, tamper-evident storage or trusted execution evidence.
 
@@ -165,12 +194,13 @@ The packet bindings are drift checks. They are **not** cryptographic signatures,
 For every new strand:
 
 1. define unique architect responsibility;
-2. define machine-checkable strategic bounds where possible;
-3. define what the engineer is forbidden to decide;
-4. define an explicit RFI/contradiction path;
-5. define an independent cross-reviewer for consequential work;
-6. add adversarial tests;
-7. verify exact-head CI;
-8. only then add it to executable routing.
+2. define what must be understood before delegation;
+3. define machine-checkable strategic bounds where possible;
+4. define what the engineer is forbidden to infer or decide;
+5. define an explicit RFI/contradiction path;
+6. define an independent cross-reviewer for consequential work;
+7. add adversarial tests;
+8. verify exact-head CI;
+9. only then add it to executable routing.
 
 > **One verified strand is stronger than fourteen theatrical agents.**
