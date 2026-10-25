@@ -10,6 +10,31 @@
 
 AgilaLogic is the conceptual and operational architecture behind **Henyong Oportunista**: a system for observing reality, filtering noise, identifying leverage, making bounded decisions, acting with explicit authority, verifying outcomes, and learning from evidence.
 
+## Executable prototype — Sovereign Scaffold
+
+**Capability ≠ Authority.**
+
+This repository now includes a working local prototype of the **Sovereign Assurance Boundary (SAB)**: a deterministic admission layer between an AI/action proposal and execution authority.
+
+The demo proves a deliberately narrow control path:
+
+`PROPOSAL → RUNTIME VALIDATION → SAB → ALLOW / HUMAN GATE / DENY → EPHEMERAL AUDIT`
+
+It includes sensitivity-aware reads, fail-closed runtime validation, server-side policy recomputation, complete-proposal approval binding, one-time demo authorization, replay rejection, and a hard-deny path for external secret exfiltration.
+
+Run it locally:
+
+```bash
+npm install
+npm run demo
+```
+
+Open `http://127.0.0.1:4173`.
+
+This is a **non-mutating local prototype**. No real external execution adapter is connected, the approval button only simulates the Node Alpha role, and authenticated human identity is not claimed yet.
+
+See [`docs/SOVEREIGN_SCAFFOLD.md`](docs/SOVEREIGN_SCAFFOLD.md) for the threat boundary, implemented controls, adversarial tests, and explicit non-claims.
+
 ## Core operating loop
 
 `OBSERVE → FILTER → CALCULATE → DECIDE → ACT → VERIFY → STORE → RECALIBRATE`

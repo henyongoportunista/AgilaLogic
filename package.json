@@ -3,13 +3,17 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node dist/orchestrator.test.js && node dist/supabase.test.js",
-    "ci": "npm run typecheck && npm test"
+    "test": "npm run build && node dist/orchestrator.test.js && node dist/sab.test.js && node dist/supabase.test.js",
+    "ci": "npm run typecheck && npm test",
+    "demo": "npm run build && node demo/server.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "5.9.3"
   }
 }

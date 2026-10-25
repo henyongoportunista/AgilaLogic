@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Sovereign Scaffold — Human-Controlled AI Action Gateway</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">HENYONG TAMAD OPS × AGILALOGIC</p>
+        <h1>Sovereign Scaffold</h1>
+      </div>
+      <div class="status-pill"><span aria-hidden="true"></span> LOCAL SANDBOX</div>
+    </header>
+
+    <main>
+      <section class="hero panel">
+        <div>
+          <p class="eyebrow">CAPABILITY ≠ AUTHORITY</p>
+          <h2>Let agents reason.<br />Keep consequential authority human.</h2>
+          <p class="lede">A working demonstration of the Sovereign Assurance Boundary: deterministic routing between an AI proposal and execution authority.</p>
+        </div>
+        <div class="flow" role="img" aria-label="Node Beta proposes, the Sovereign Assurance Boundary routes, a human role may veto or approve, then the audit layer records the result">
+          <div class="node"><small>NODE BETA</small><strong>PROPOSE</strong></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node active"><small>SAB</small><strong>ROUTE</strong></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><small>NODE ALPHA ROLE</small><strong>VETO / APPROVE</strong></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><small>AUDIT</small><strong>VERIFY</strong></div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <article class="panel scenario-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">01 / PROPOSAL</p>
+              <h3>Choose a scenario</h3>
+            </div>
+          </div>
+
+          <div class="scenario-grid" id="scenarioGrid" aria-label="Demo scenarios"></div>
+
+          <div class="proposal-card" id="proposalCard">
+            <div class="kv"><span>Action</span><strong id="pType">—</strong></div>
+            <div class="kv"><span>Scope</span><strong id="pScope">—</strong></div>
+            <div class="kv"><span>Target</span><strong id="pTarget">—</strong></div>
+            <div class="kv"><span>Data sensitivity</span><strong id="pSensitivity">—</strong></div>
+            <div class="kv"><span>Reversible</span><strong id="pReversible">—</strong></div>
+            <div class="kv"><span>Blast radius</span><strong id="pBlast">—</strong></div>
+          </div>
+
+          <button class="primary" id="evaluateBtn" type="button">Evaluate through SAB</button>
+        </article>
+
+        <article class="panel decision-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">02 / ASSURANCE BOUNDARY</p>
+              <h3>Decision</h3>
+            </div>
+            <span class="decision-badge neutral" id="routeBadge" aria-live="polite">NOT EVALUATED</span>
+          </div>
+
+          <div class="decision-body">
+            <div class="meter-row">
+              <span>Consequence class</span>
+              <strong id="consequence">—</strong>
+            </div>
+            <div class="meter-row">
+              <span>Policy version</span>
+              <strong id="policyVersion">—</strong>
+            </div>
+            <div>
+              <span class="label">Reasons</span>
+              <ul id="reasons" class="reason-list"><li>Run a scenario to inspect deterministic routing.</li></ul>
+            </div>
+          </div>
+
+          <div class="human-gate" id="humanGate" role="region" aria-labelledby="humanGateTitle" hidden>
+            <p class="eyebrow">HUMAN GATE REQUIRED</p>
+            <h4 id="humanGateTitle">Demo operator authorization</h4>
+            <p>The server stores the evaluated proposal and binds approval to the complete proposal payload and policy version. This button simulates the Node Alpha role; identity authentication is not claimed in this MVP.</p>
+            <div class="action-row">
+              <button class="danger" id="rejectBtn" type="button">Reject</button>
+              <button class="approve" id="approveBtn" type="button">Approve one-time sandbox authorization</button>
+            </div>
+          </div>
+
+          <div class="result-box" id="resultBox" role="status" aria-live="polite" aria-atomic="true">
+            <span class="label">Execution status</span>
+            <strong id="executionStatus">WAITING</strong>
+            <p id="executionNote">No real external side effect is executed in this demo.</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel audit-panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">03 / TRACEABILITY</p>
+            <h3>Ephemeral audit ledger</h3>
+          </div>
+          <button class="ghost" id="refreshAuditBtn" type="button">Refresh</button>
+        </div>
+        <div id="auditList" class="audit-list" aria-live="polite">
+          <p class="empty">No events yet.</p>
+        </div>
+      </section>
+
+      <section class="principles">
+        <div class="principle"><span>01</span><strong>Reasoning is not permission.</strong><p>Agent output is treated as a proposal, not authority.</p></div>
+        <div class="principle"><span>02</span><strong>Unknown is not safe.</strong><p>Missing blast radius, cost, or secret status cannot silently inherit low-risk defaults.</p></div>
+        <div class="principle"><span>03</span><strong>Approval must bind proposal + policy.</strong><p>Scope, target, blast radius, reversibility, sensitivity, and policy version cannot silently drift after approval.</p></div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Experimental working prototype — not a claim of formal verification or complete enterprise security.</span>
+      <span>Demo operator ≠ authenticated Node Alpha identity.</span>
+    </footer>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -14,15 +14,272 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          cache: npm
 
       - name: Install
-        run: npm install
+        run: npm ci --ignore-scripts --no-fund
 
       - name: Typecheck and test
         run: npm run ci
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+      - name: Portfolio accessibility regression contract
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const html = fs.readFileSync('demo/index.html', 'utf8');
+          const css = fs.readFileSync('demo/styles.css', 'utf8');
+          const app = fs.readFileSync('demo/app.js', 'utf8');
+
+          for (const required of ['role="status"', 'aria-live="polite"', 'aria-atomic="true"']) {
+            if (!html.includes(required)) throw new Error(`missing accessibility contract: ${required}`);
+          }
+          for (const required of ['aria-pressed', 'evaluationGeneration']) {
+            if (!app.includes(required)) throw new Error(`missing UI state guard: ${required}`);
+          }
+          for (const required of ['button:focus-visible', 'prefers-reduced-motion']) {
+            if (!css.includes(required)) throw new Error(`missing CSS accessibility contract: ${required}`);
+          }
+
+          function channel(value) {
+            const x = value / 255;
+            return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+          }
+          function luminance(hex) {
+            const value = hex.replace('#', '');
+            const [r, g, b] = [0, 2, 4].map((i) => channel(parseInt(value.slice(i, i + 2), 16)));
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          }
+          function ratio(a, b) {
+            const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+            return (hi + 0.05) / (lo + 0.05);
+          }
+
+          const footerColor = css.match(/footer\s*\{[^}]*color:\s*(#[0-9a-fA-F]{6})/s)?.[1];
+          const rootBackground = css.match(/:root\s*\{[^}]*background:\s*(#[0-9a-fA-F]{6})/s)?.[1];
+          if (!footerColor || !rootBackground) throw new Error('unable to resolve footer contrast colors');
+          if (ratio(footerColor, rootBackground) < 4.5) {
+            throw new Error(`footer contrast below WCAG AA: ${ratio(footerColor, rootBackground).toFixed(2)}:1`);
+          }
+          NODE
+
+      - name: Adversarial smoke test Sovereign Scaffold demo API
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          npm run demo > /tmp/sovereign-scaffold-demo.log 2>&1 &
+          DEMO_PID=$!
+          trap 'kill $DEMO_PID 2>/dev/null || true' EXIT
+
+          READY=0
+          for i in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:4173/api/health > /tmp/health.json; then
+              READY=1
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            cat /tmp/sovereign-scaffold-demo.log
+            exit 1
+          fi
+
+          node -e '
+            const h = require("/tmp/health.json");
+            if (!h.ok || !h.policyVersion) process.exit(1);
+            if (h.executionAdapterConnected !== false || h.nodeAlphaIdentityVerified !== false) process.exit(1);
+          '
+
+          curl --silent --show-error -D /tmp/demo-headers.txt http://127.0.0.1:4173/ -o /tmp/demo-index.html
+          grep -qi '^content-security-policy:' /tmp/demo-headers.txt
+          grep -qi '^x-content-type-options: nosniff' /tmp/demo-headers.txt
+          grep -qi '^cross-origin-resource-policy: same-origin' /tmp/demo-headers.txt
+
+          PLAIN_CODE=$(curl --silent --show-error \
+            -o /tmp/plain.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: text/plain' \
+            -d '{"proposal":{}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$PLAIN_CODE" = "415"
+
+          CROSS_SITE_CODE=$(curl --silent --show-error \
+            -o /tmp/cross-site.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -H 'sec-fetch-site: cross-site' \
+            -d '{"proposal":{}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$CROSS_SITE_CODE" = "403"
+
+          ORIGIN_MISMATCH_CODE=$(curl --silent --show-error \
+            -o /tmp/origin-mismatch.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -H 'origin: https://evil.example' \
+            -d '{"proposal":{}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$ORIGIN_MISMATCH_CODE" = "403"
+
+          node -e 'process.stdout.write(JSON.stringify({proposal:{padding:"x".repeat(70000)}}))' > /tmp/oversized.json
+          OVERSIZED_CODE=$(curl --silent --show-error \
+            -o /tmp/oversized-response.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/oversized.json \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$OVERSIZED_CODE" = "413"
+
+          EVAL_CODE=$(curl --silent --show-error \
+            -o /tmp/eval.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -H 'origin: http://127.0.0.1:4173' \
+            -d '{"proposal":{"type":"WRITE","scope":"PRODUCTION","target":"crm.customer_status","reversible":true,"dataSensitivity":"SENSITIVE","affectedRecords":47,"estimatedCost":0,"containsSecrets":false}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$EVAL_CODE" = "200"
+
+          PROPOSAL_ID=$(node -e '
+            const fs = require("fs");
+            const x = JSON.parse(fs.readFileSync("/tmp/eval.json", "utf8"));
+            if (x.decision.route !== "REQUIRE_HUMAN_APPROVAL") process.exit(1);
+            if (!x.decision.policyVersion || !x.proposal.id) process.exit(1);
+            process.stdout.write(x.proposal.id);
+          ')
+
+          INCOMPLETE_CODE=$(curl --silent --show-error \
+            -o /tmp/incomplete.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"WRITE","scope":"SANDBOX","target":"sandbox.incomplete","reversible":true,"dataSensitivity":"INTERNAL"}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$INCOMPLETE_CODE" = "200"
+          node -e '
+            const fs = require("fs");
+            const x = JSON.parse(fs.readFileSync("/tmp/incomplete.json", "utf8"));
+            if (x.decision.route !== "REQUIRE_HUMAN_APPROVAL") process.exit(1);
+            for (const r of ["unknown_blast_radius", "unknown_cost", "unknown_secret_status"]) if (!x.decision.reasons.includes(r)) process.exit(1);
+          '
+
+          BULK_READ_CODE=$(curl --silent --show-error \
+            -o /tmp/bulk-read.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"READ","scope":"PRODUCTION","target":"public.catalog","reversible":true,"dataSensitivity":"PUBLIC","affectedRecords":50000,"estimatedCost":0,"containsSecrets":false}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$BULK_READ_CODE" = "200"
+          node -e '
+            const fs = require("fs");
+            const x = JSON.parse(fs.readFileSync("/tmp/bulk-read.json", "utf8"));
+            if (x.decision.route !== "REQUIRE_HUMAN_APPROVAL") process.exit(1);
+            if (!x.decision.reasons.includes("bulk_read_requires_authority")) process.exit(1);
+          '
+
+          AUTH_CODE=$(curl --silent --show-error \
+            -o /tmp/auth.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d "{\"proposalId\":\"$PROPOSAL_ID\"}" \
+            http://127.0.0.1:4173/api/authorize)
+          test "$AUTH_CODE" = "200"
+
+          node -e '
+            const fs = require("fs");
+            const x = JSON.parse(fs.readFileSync("/tmp/auth.json", "utf8"));
+            if (x.authorized !== true || !x.policyVersion) process.exit(1);
+            if (x.identityVerified !== false || x.executionAdapterConnected !== false) process.exit(1);
+          '
+
+          REPLAY_CODE=$(curl --silent --show-error \
+            -o /tmp/replay.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d "{\"proposalId\":\"$PROPOSAL_ID\"}" \
+            http://127.0.0.1:4173/api/authorize)
+          test "$REPLAY_CODE" = "404"
+
+          FORGED_CODE=$(curl --silent --show-error \
+            -o /tmp/forged.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"DELETE"},"decision":{"route":"ALLOW"},"approval":{"approved":true}}' \
+            http://127.0.0.1:4173/api/authorize)
+          test "$FORGED_CODE" = "400"
+
+          MALFORMED_CODE=$(curl --silent --show-error \
+            -o /tmp/malformed.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"READ_AND_DELETE","scope":"PRODUCTION","target":"crm.customers","reversible":"yes","dataSensitivity":"UNKNOWN","affectedRecords":-1}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$MALFORMED_CODE" = "400"
+
+          ATTACKER_KEY_CODE=$(curl --silent --show-error \
+            -o /tmp/attacker-key.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"READ","scope":"PRODUCTION","target":"public.catalog","reversible":true,"dataSensitivity":"PUBLIC","affectedRecords":1,"APIKEY-supersecret-value":true}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$ATTACKER_KEY_CODE" = "400"
+          if grep -q 'supersecret' /tmp/attacker-key.json; then
+            echo 'attacker-controlled field name leaked into validation response'
+            exit 1
+          fi
+
+          CONTRADICTION_CODE=$(curl --silent --show-error \
+            -o /tmp/contradiction.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"WRITE","scope":"SANDBOX","target":"sandbox.bad","reversible":true,"dataSensitivity":"PUBLIC","affectedRecords":1,"estimatedCost":0,"containsSecrets":true}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$CONTRADICTION_CODE" = "400"
+
+          SECRET_CODE=$(curl --silent --show-error \
+            -o /tmp/secret.json \
+            -w '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d '{"proposal":{"type":"EXTERNAL_MESSAGE","scope":"EXTERNAL","target":"external.webhook","reversible":false,"dataSensitivity":"SECRET","affectedRecords":1,"estimatedCost":0,"containsSecrets":true}}' \
+            http://127.0.0.1:4173/api/evaluate)
+          test "$SECRET_CODE" = "200"
+          node -e '
+            const fs = require("fs");
+            const x = JSON.parse(fs.readFileSync("/tmp/secret.json", "utf8"));
+            if (x.decision.route !== "DENY" || x.decision.requiresApproval !== false) process.exit(1);
+          '
+
+          curl --fail --silent http://127.0.0.1:4173/api/audit > /tmp/audit.json
+          if grep -q 'crm.customer_status' /tmp/audit.json; then
+            echo 'raw target leaked into audit ledger'
+            exit 1
+          fi
+          if grep -q 'supersecret' /tmp/audit.json; then
+            echo 'attacker-controlled validation text leaked into audit ledger'
+            exit 1
+          fi
