@@ -155,6 +155,7 @@ assert(
     rpcCalls.includes("henyong_lifecycle_registry_cas"),
   "adapter must use the service-role RPC load/CAS boundary",
 );
-assert(stored?.revision === 2, "mock external row must retain the latest revision");
+const reloaded = await store.load("supabase-context");
+assert(reloaded?.revision === 2, "mock external row must retain the latest revision");
 
 console.log("Supabase replay-store adapter tests passed");
