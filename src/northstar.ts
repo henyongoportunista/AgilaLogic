@@ -253,12 +253,53 @@ export function compileNorthstarContext(input: CompileNorthstarContextInput): No
 }
 
 export function verifyNorthstarContextPack(pack: NorthstarContextPack): boolean {
+  if (typeof pack !== "object" || pack === null) return false;
   if (pack.version !== NORTHSTAR_VERSION) return false;
   if (pack.architectureVersion !== ARCHITECT_ENGINEER_STRAND_VERSION) return false;
   if (!PRINCIPALS.has(pack.principal)) return false;
   if (!VERIFICATION_MODES.has(pack.principalVerification)) return false;
-  if (!NORTHSTAR_ROLE_CONTRACTS.some((role) => role.roleId === pack.roleId)) return false;
-  if (pack.allowedKnowledgeClasses.includes("SECRET")) return false;
+
+  const role = NORTHSTAR_ROLE_CONTRACTS.find((entry) => entry.roleId === pack.roleId);
+  if (!role) return false;
+  if (pack.lane !== role.lane) return false;
+  if (pack.pairedRoleId !== role.pairedRoleId) return false;
+  if (pack.authorityCeiling !== role.authorityCeiling) return false;
+  if (normalize(pack.responsibility) !== normalize(role.responsibility)) return false;
+
+  if (pack.principal === "UNVERIFIED_PUBLIC") {
+    if (pack.principalVerification !== "PUBLIC_SESSION") return false;
+  } else if (pack.principalVerification !== "EXTERNAL_AUTH") {
+    return false;
+  }
+
+  if (!Array.isArray(pack.allowedKnowledgeClasses) || pack.allowedKnowledgeClasses.length === 0) return false;
+  if (!Array.isArray(pack.deniedKnowledgeClasses)) return false;
+  if (pack.allowedKnowledgeClasses.some((value) => !KNOWLEDGE_CLASSES.has(value) || value === "SECRET")) {
+    return false;
+  }
+  if (pack.deniedKnowledgeClasses.some((value) => !KNOWLEDGE_CLASSES.has(value))) return false;
+  if (new Set(pack.allowedKnowledgeClasses).size !== pack.allowedKnowledgeClasses.length) return false;
+  if (new Set(pack.deniedKnowledgeClasses).size !== pack.deniedKnowledgeClasses.length) return false;
+  if (pack.allowedKnowledgeClasses.some((value) => pack.deniedKnowledgeClasses.includes(value))) return false;
+
+  const principalAllowed = principalKnowledgeClasses(pack.principal);
+  const roleAllowed = new Set(role.allowedKnowledgeClasses);
+  if (pack.allowedKnowledgeClasses.some((value) => !principalAllowed.has(value) || !roleAllowed.has(value))) {
+    return false;
+  }
+
+  if (canonicalString(pack.immutablePrinciples) !== canonicalString([...NORTHSTAR_IMMUTABLE_PRINCIPLES])) {
+    return false;
+  }
+
+  try {
+    boundedText(pack.sessionId, MAX_ID_LENGTH, "principal_session_id");
+    const issuedAt = parseIsoInstant(pack.issuedAt, "principal_issued_at");
+    const expiresAt = parseIsoInstant(pack.expiresAt, "principal_expires_at");
+    if (expiresAt.getTime() <= issuedAt.getTime()) return false;
+  } catch {
+    return false;
+  }
 
   const { contextBinding: claimedBinding, ...payload } = pack;
   return claimedBinding === contextBinding(payload);
