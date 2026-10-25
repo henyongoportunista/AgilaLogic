@@ -61,6 +61,7 @@ function normalizeText(value: string): string {
 }
 
 function validateSignal(signal: GagambaSignal): string | undefined {
+  if (typeof signal !== "object" || signal === null) return "invalid_signal";
   if (typeof signal.id !== "string" || signal.id.trim().length === 0) return "invalid_signal_id";
   if (signal.id.length > MAX_SIGNAL_ID_LENGTH) return "signal_id_too_long";
   if (!SIGNAL_KINDS.has(signal.kind)) return "invalid_signal_kind";
