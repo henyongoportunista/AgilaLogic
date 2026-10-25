@@ -12,15 +12,24 @@ AgilaLogic is the conceptual and operational architecture behind **Henyong Oport
 
 ## Experimental Gagamba × Agila weave
 
-A separate integration branch adds a deliberately narrow **Gagamba observation weave** in front of the existing Agila decision engine:
+A separate integration branch adds a bounded Gagamba architecture layer in front of the existing Agila decision engine:
 
-`RAW SIGNALS → GAGAMBA WEAVE → AGILA DECIDE`
+`RAW SIGNALS → GAGAMBA WEAVE → GAGAMBA ARCHITECT → AGILA ENGINEER → UNATTESTED PROPOSAL → SAB`
 
-The first seam preserves facts separately from inference and prediction, keeps uncertainty visible, treats explicit human preference as a constraint, and withholds malformed or duplicate signals before they reach Agila evaluation.
+The current model defines **7 Gagamba architect disciplines** and **7 Agila engineer disciplines** as available specialist roles, not fourteen always-on autonomous bots:
 
-This is an operational translation only. It does **not** claim that the full Gagamba psychological/philosophical architecture, Active Inference, Free Energy minimization, autonomous persona rotation, or neurobiological mechanisms are implemented.
+`HT→MT · PH→MB · TM→KM · MG→HO · KP→UO · MM→UM · EI→IW`
 
-See [`docs/GAGAMBA_AGILA_WEAVE.md`](docs/GAGAMBA_AGILA_WEAVE.md).
+Only the first `HT → MT` strand is executable in the current branch. It uses bound ArchitecturePacket and EngineeringPacket contracts; MT recomputes the Agila decision from the bound architect packet instead of trusting a caller-supplied verdict. Any downstream action metadata remains explicitly `UNATTESTED` until a future trusted adapter independently derives the concrete operation.
+
+The weave preserves facts separately from inference and prediction, keeps uncertainty visible, treats explicit human preference as a constraint, and withholds malformed or duplicate signals before they reach Agila evaluation.
+
+This is an operational translation only. It does **not** claim that the full Gagamba psychological/philosophical architecture, Active Inference, Free Energy minimization, autonomous persona rotation, neurobiological mechanisms, cryptographic identity, trusted adapter attestation or real execution are implemented.
+
+See:
+
+- [`docs/GAGAMBA_AGILA_WEAVE.md`](docs/GAGAMBA_AGILA_WEAVE.md)
+- [`docs/ARCHITECT_ENGINEER_RED_TEAM.md`](docs/ARCHITECT_ENGINEER_RED_TEAM.md)
 
 ## Executable prototype — Sovereign Scaffold
 
