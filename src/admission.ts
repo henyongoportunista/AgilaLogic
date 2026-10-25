@@ -8,6 +8,10 @@ import {
   verifyProvenanceIntegrity,
   type ProvenanceIntegrityEnvelope,
 } from "./provenance-integrity.js";
+import {
+  assertVerifiedAdapterAttestationFresh,
+  type VerifiedAdapterAttestation,
+} from "./runtime-identity.js";
 import type { UntrustedSabProposalCandidate } from "./strand.js";
 import {
   TRUST_SPINE_VERSION,
@@ -15,13 +19,12 @@ import {
   compareAdapterAttestation,
   verifyBoundArchitectureState,
   verifyBoundEngineeringState,
-  type AdapterAttestation,
   type BoundArchitectureState,
   type BoundEngineeringState,
   type ProvenanceLedger,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.3" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.4" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
@@ -30,7 +33,7 @@ export interface TrustAdmissionInput {
   engineeringState: BoundEngineeringState;
   northstarContext: NorthstarContextPack;
   expectation: UntrustedSabProposalCandidate;
-  attestation: AdapterAttestation;
+  verifiedAttestation: VerifiedAdapterAttestation;
   now?: Date;
 }
 
@@ -45,6 +48,9 @@ export interface SabAdmissibleCandidate {
     northstarContextBinding: string;
     attestationId: string;
     adapterId: string;
+    adapterIdentityBinding: string;
+    adapterIdentityProviderId: string;
+    adapterIdentityAssurance: string;
     principal: string;
     roleId: string;
   };
@@ -101,12 +107,15 @@ function validateFactProvenance(
 }
 
 /**
- * Mandatory structural composition gate before a proposal may be presented to SAB.
+ * Mandatory composition gate before a proposal may be presented to SAB.
  *
- * It does not authenticate the operator, adapter, provenance source, or model.
- * Provenance integrity here is deterministic/non-cryptographic mutation detection,
- * not source authentication or tamper-evident persistence against a capable attacker.
- * It does not call SAB and does not grant execution authority.
+ * This layer verifies structural source/state/role/operation contracts and also
+ * requires the adapter attestation to have been coupled to an independently
+ * resolved runtime adapter identity in the current process.
+ *
+ * It still does not grant execution authority. Runtime identity verification is
+ * only as strong as the configured external verifier/provider; deterministic
+ * bindings here are not signatures by themselves.
  */
 export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
   const reasons: string[] = [];
@@ -193,7 +202,14 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     }
   }
 
-  const operationComparison = compareAdapterAttestation(input.expectation, input.attestation, now);
+  try {
+    assertVerifiedAdapterAttestationFresh(input.verifiedAttestation, now);
+  } catch {
+    addOnce(reasons, "adapter_identity_not_verified_or_fresh");
+  }
+
+  const attestation = input.verifiedAttestation.attestation;
+  const operationComparison = compareAdapterAttestation(input.expectation, attestation, now);
   if (!operationComparison.matched || !operationComparison.candidate) {
     addOnce(reasons, "operation_truth_mismatch");
     for (const reason of operationComparison.reasons) addOnce(reasons, reason);
@@ -205,7 +221,7 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
 
   return {
     admitted: true,
-    reasons: ["source_state_role_and_operation_contracts_structurally_match"],
+    reasons: ["source_state_role_operation_and_adapter_identity_contracts_match"],
     candidate: {
       trust: "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
       admissionVersion: TRUST_ADMISSION_VERSION,
@@ -217,6 +233,9 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
         northstarContextBinding: input.northstarContext.contextBinding,
         attestationId: operationComparison.candidate.attestationId,
         adapterId: operationComparison.candidate.adapterId,
+        adapterIdentityBinding: input.verifiedAttestation.identity.binding,
+        adapterIdentityProviderId: input.verifiedAttestation.identity.providerId,
+        adapterIdentityAssurance: input.verifiedAttestation.identity.assurance,
         principal: input.northstarContext.principal,
         roleId: input.northstarContext.roleId,
       },
