@@ -11,6 +11,7 @@ import {
   registerEngineeringState,
 } from "./lifecycle.js";
 import { compileNorthstarContext } from "./northstar.js";
+import { bindProvenanceAttestation } from "./provenance-attestation.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -217,11 +218,22 @@ const attestation: AdapterAttestation = {
 };
 
 const provenanceLedger = buildProvenanceLedger(weave);
+const factEntry = provenanceLedger.entries.find((entry) => entry.signalId === "fact-1");
+assert(factEntry !== undefined, "fact provenance entry must exist");
+const provenanceAttestation = bindProvenanceAttestation(factEntry, {
+  attestationId: "admission-source-attestation",
+  verifierId: "mock-source-verifier",
+  verifiedAt: "2026-10-25T03:21:00.000Z",
+  expiresAt: "2026-10-25T03:50:00.000Z",
+  evidenceRef: "opaque:admission-source-evidence",
+});
+const provenanceAttestations = [provenanceAttestation];
 const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceAttestations,
     lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -242,11 +254,16 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     result.candidate?.evidence.lifecycleRegistryBinding === lifecycleRegistry.binding,
     "admission evidence must preserve active lifecycle registry binding",
   );
+  assert(
+    result.candidate?.evidence.provenanceAttestationIds.includes(provenanceAttestation.attestationId),
+    "admission evidence must preserve provenance attestation ID",
+  );
 }
 
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceAttestations,
     lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -269,6 +286,27 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 }
 
 {
+  const result = admitForSab({
+    provenanceLedger,
+    provenanceAttestations: [],
+    lifecycleRegistry,
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    attestation,
+    now: admissionNow,
+  });
+
+  assert(!result.admitted, "known provenance without a source attestation must not pass admission");
+  assert(
+    result.reasons.includes("architecture_fact_missing_provenance_attestation") ||
+      result.reasons.includes("architecture_fact_provenance_not_attested"),
+    "missing source attestation must be explicit",
+  );
+}
+
+{
   const brokenLedger = {
     ...provenanceLedger,
     entries: provenanceLedger.entries.map((entry) =>
@@ -279,6 +317,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger: brokenLedger,
+    provenanceAttestations,
     lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -313,6 +352,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger,
+    provenanceAttestations,
     lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -329,6 +369,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceAttestations,
     lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -350,6 +391,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceAttestations,
     lifecycleRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -381,6 +423,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger,
+    provenanceAttestations,
     lifecycleRegistry: supersededRegistry,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
@@ -397,4 +440,4 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   );
 }
 
-console.log("trust admission v0.4 tests passed");
+console.log("trust admission v0.5 tests passed");
