@@ -1,6 +1,6 @@
 # Unified Gagamba × Agila Architecture
 
-Status: **experimental canonical design — ROEM Phase 1 refinement applied; verification pending**
+Status: **experimental canonical design — ROEM Phase 1 refinement applied; exact-head evidence tracked in PR #2**
 
 Only the `HT → MT` strand is executable today. The other six architect→engineer pairings remain routing contracts, not implemented autonomous agents.
 
@@ -293,7 +293,7 @@ Do not promote one label into another by wording alone.
 
 ## Current implementation boundary
 
-### Implemented / tested in this branch before final Phase-1 verification
+### Implemented / tested in this Phase-1 source
 
 - typed Gagamba signal weave;
 - fact / inference / prediction / unknown separation;
@@ -312,6 +312,8 @@ Do not promote one label into another by wording alone.
 - proposal rejection outside architecture intent;
 - explicit `UNATTESTED` proposal output;
 - SAB deterministic policy preview and adversarial tests.
+
+Exact revision evidence is recorded in PR #2; this document does not substitute for CI results.
 
 ### Not implemented
 
