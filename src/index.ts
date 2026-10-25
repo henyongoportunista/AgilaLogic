@@ -68,6 +68,26 @@ export type {
   RfiOwner,
   RfiStatus,
 } from "./trust.js";
+export {
+  NORTHSTAR_IMMUTABLE_PRINCIPLES,
+  NORTHSTAR_ROLE_CONTRACTS,
+  NORTHSTAR_VERSION,
+  assertNorthstarContextFresh,
+  compileNorthstarContext,
+  verifyNorthstarContextPack,
+} from "./northstar.js";
+export type {
+  CompileNorthstarContextInput,
+  NorthstarAuthorityCeiling,
+  NorthstarContextPack,
+  NorthstarKnowledgeClass,
+  NorthstarLane,
+  NorthstarPrincipal,
+  NorthstarRoleContract,
+  NorthstarRoleId,
+  PrincipalContext,
+  PrincipalVerification,
+} from "./northstar.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {
