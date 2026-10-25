@@ -6,6 +6,11 @@ import {
   type NorthstarPrincipal,
 } from "./northstar.js";
 import {
+  assertPersistedArchitectureStateActive,
+  assertPersistedEngineeringStateActive,
+  type LifecycleRegistryStore,
+} from "./replay-store.js";
+import {
   SAB_POLICY_VERSION,
   evaluateProposal,
   isExecutionAuthorized,
@@ -14,8 +19,9 @@ import {
   type ApprovalRecord,
   type SabRoute,
 } from "./sab.js";
+import type { BoundArchitectureState, BoundEngineeringState } from "./trust.js";
 
-export const PRE_EXECUTION_VERSION = "2026-10-25.1" as const;
+export const PRE_EXECUTION_VERSION = "2026-10-25.2" as const;
 export const EXECUTION_RECEIPT_VERSION = "2026-10-25.1" as const;
 
 const MAX_ID_LENGTH = 200;
@@ -152,9 +158,9 @@ function sessionApprovalBinding(
 }
 
 /**
- * Binds an already-created SAB approval record to a Northstar context that claims
- * to originate from EXTERNAL_AUTH. Northstar still does not authenticate identity;
- * the production auth boundary must mint the principal/session assertion.
+ * Binds an already-created SAB approval record to a Northstar context compiled
+ * from an externally resolved verified principal. Real identity trust still
+ * comes from the external auth verifier, not from this binding.
  */
 export function bindApprovalToNorthstar(
   proposal: ActionProposal,
@@ -219,6 +225,8 @@ export interface PreExecutionRequest {
   trust: "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED";
   proposal: ActionProposal;
   proposalBinding: string;
+  architectureTrustBinding: string;
+  engineeringTrustBinding: string;
   sabRoute: Exclude<SabRoute, "DENY">;
   policyVersion: typeof SAB_POLICY_VERSION;
   principal: NorthstarPrincipal;
@@ -240,23 +248,34 @@ function preExecutionBinding(
 
 export interface PreparePreExecutionInput {
   admission: TrustAdmissionInput;
+  lifecycleStore: LifecycleRegistryStore;
   resourceState: ResourceStateSnapshot;
   sessionBoundApproval?: SessionBoundApproval;
   now?: Date;
 }
 
 /**
- * Recomputes Trust Admission rather than trusting an admission label supplied by
- * a caller. It then binds the proposal to a fresh resource-state token and, when
- * SAB requires human approval, to the exact Northstar session that approved it.
+ * Recomputes Trust Admission and requires both Architecture and Engineering
+ * lifecycle states to be persisted and currently active. It then binds the
+ * proposal to fresh resource state and, when required, to the exact approved
+ * Northstar session.
  *
  * Output is still structurally unauthenticated and is not an execution command.
  */
-export function preparePreExecution(
+export async function preparePreExecution(
   input: PreparePreExecutionInput,
-): PreExecutionRequest {
+): Promise<PreExecutionRequest> {
   const now = input.now ?? new Date();
   if (!Number.isFinite(now.getTime())) throw new TypeError("invalid_now");
+
+  await assertPersistedArchitectureStateActive(
+    input.lifecycleStore,
+    input.admission.architectureState,
+  );
+  await assertPersistedEngineeringStateActive(
+    input.lifecycleStore,
+    input.admission.engineeringState,
+  );
 
   const admission = admitForSab({ ...input.admission, now });
   if (!admission.admitted || !admission.candidate) {
@@ -313,6 +332,8 @@ export function preparePreExecution(
     trust: "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED",
     proposal: { ...proposal },
     proposalBinding: proposalBinding(proposal),
+    architectureTrustBinding: input.admission.architectureState.trustBinding,
+    engineeringTrustBinding: input.admission.engineeringState.trustBinding,
     sabRoute: decision.route,
     policyVersion: SAB_POLICY_VERSION,
     principal: northstar.principal,
@@ -339,7 +360,10 @@ export function verifyPreExecutionRequest(request: PreExecutionRequest): boolean
     const preparedAt = parseIsoInstant(request.preparedAt, "pre_execution_prepared_at");
     const expiresAt = parseIsoInstant(request.expiresAt, "pre_execution_expires_at");
     if (expiresAt.getTime() <= preparedAt.getTime()) return false;
+    boundedText(request.architectureTrustBinding, MAX_REF_LENGTH, "pre_execution_architecture_binding");
+    boundedText(request.engineeringTrustBinding, MAX_REF_LENGTH, "pre_execution_engineering_binding");
     boundedText(request.adapterId, MAX_ID_LENGTH, "pre_execution_adapter_id");
+    boundedText(request.expectedResourceStateBinding, MAX_REF_LENGTH, "pre_execution_resource_binding");
     boundedText(request.expectedResourceStateToken, MAX_TOKEN_LENGTH, "pre_execution_state_token");
     boundedText(request.sessionId, MAX_ID_LENGTH, "pre_execution_session_id");
   } catch {
@@ -350,8 +374,7 @@ export function verifyPreExecutionRequest(request: PreExecutionRequest): boolean
 }
 
 /**
- * Final optimistic TOCTOU check immediately before a real adapter call.
- * A changed token, target, or adapter fails closed.
+ * Low-level resource-only optimistic TOCTOU check.
  */
 export function assertResourceStateUnchanged(
   request: PreExecutionRequest,
@@ -365,9 +388,45 @@ export function assertResourceStateUnchanged(
   assertResourceStateFresh(currentState, now);
   if (currentState.adapterId !== request.adapterId) throw new Error("resource_adapter_changed");
   if (currentState.target !== request.proposal.target) throw new Error("resource_target_changed");
+  if (currentState.binding !== request.expectedResourceStateBinding && currentState.stateToken !== request.expectedResourceStateToken) {
+    throw new Error("resource_state_changed_since_preparation");
+  }
   if (currentState.stateToken !== request.expectedResourceStateToken) {
     throw new Error("resource_state_changed_since_preparation");
   }
+}
+
+export interface ExecutionPreconditionCheckInput {
+  request: PreExecutionRequest;
+  lifecycleStore: LifecycleRegistryStore;
+  architectureState: BoundArchitectureState;
+  engineeringState: BoundEngineeringState;
+  currentResourceState: ResourceStateSnapshot;
+  now?: Date;
+}
+
+/**
+ * Mandatory final recheck intended to run immediately before a future adapter
+ * side effect. It closes the gap where a lifecycle could be superseded after
+ * preparation but before the real operation begins.
+ */
+export async function assertExecutionPreconditionsUnchanged(
+  input: ExecutionPreconditionCheckInput,
+): Promise<void> {
+  const now = input.now ?? new Date();
+  if (!verifyPreExecutionRequest(input.request)) {
+    throw new Error("pre_execution_binding_mismatch");
+  }
+  if (input.architectureState.trustBinding !== input.request.architectureTrustBinding) {
+    throw new Error("pre_execution_architecture_state_mismatch");
+  }
+  if (input.engineeringState.trustBinding !== input.request.engineeringTrustBinding) {
+    throw new Error("pre_execution_engineering_state_mismatch");
+  }
+
+  await assertPersistedArchitectureStateActive(input.lifecycleStore, input.architectureState);
+  await assertPersistedEngineeringStateActive(input.lifecycleStore, input.engineeringState);
+  assertResourceStateUnchanged(input.request, input.currentResourceState, now);
 }
 
 export type ExecutionOutcome = "SUCCEEDED" | "FAILED" | "UNKNOWN";
