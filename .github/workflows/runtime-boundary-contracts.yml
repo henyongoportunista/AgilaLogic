@@ -1,0 +1,51 @@
+name: Runtime Boundary Contracts
+
+on:
+  push:
+    branches:
+      - feat/runtime-identity-receipts-v0-1
+  pull_request:
+    branches:
+      - feat/trust-spine-v0-3-replay-rfi
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck and build
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Runtime identity contracts
+        run: node dist/runtime-identity.test.js
+
+      - name: Trust admission with adapter identity
+        run: node dist/admission.test.js
+
+      - name: Pre-execution replay and TOCTOU contracts
+        run: node dist/execution.test.js
+
+      - name: Execution attempt reservation contracts
+        run: node dist/execution-attempt.test.js
+
+      - name: Receipt store contracts
+        run: |
+          node dist/receipt-store.test.js
+          node dist/supabase-receipt-store.test.js

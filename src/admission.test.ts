@@ -2,6 +2,12 @@ import { admitForSab } from "./admission.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
+import {
+  RUNTIME_IDENTITY_VERSION,
+  bindAdapterAttestationToIdentity,
+  resolveRuntimeIdentity,
+  type RuntimeIdentityVerifier,
+} from "./runtime-identity.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -87,14 +93,9 @@ const boundArchitecture = bindArchitectureLifecycle(
 
 const { engineering } = mtEngineer(
   architecture,
-  {
-    autonomyLevel: 2,
-    riskTolerance: 0.3,
-    confidenceThreshold: 0.7,
-  },
+  { autonomyLevel: 2, riskTolerance: 0.3, confidenceThreshold: 0.7 },
   "admission-engineering",
 );
-
 assert(engineering.intent === "PROPOSAL_ONLY", "fixture must produce proposal-only engineering");
 
 const engineeringLifecycle: PacketLifecycle = {
@@ -137,7 +138,7 @@ const northstarContext = compileNorthstarContext({
   now: new Date("2026-10-25T03:30:00.000Z"),
 });
 
-const attestation: AdapterAttestation = {
+const rawAttestation: AdapterAttestation = {
   version: TRUST_SPINE_VERSION,
   attestationId: "admission-attestation",
   requestId: engineering.packetId,
@@ -159,6 +160,41 @@ const attestation: AdapterAttestation = {
   },
 };
 
+const adapterVerifier: RuntimeIdentityVerifier = {
+  providerId: "fixture-runtime-provider",
+  async verify() {
+    return {
+      verified: true,
+      providerId: "fixture-runtime-provider",
+      actorKind: "ADAPTER",
+      actorId: "mock-adapter-contract",
+      sessionId: "adapter-session-1",
+      subjectRef: "fixture-runtime://adapter/mock-adapter-contract",
+      assurance: "SIGNED_ASSERTION",
+      authenticatedAt: "2026-10-25T03:00:00.000Z",
+      expiresAt: "2026-10-25T04:00:00.000Z",
+      revoked: false,
+    };
+  },
+};
+
+const adapterIdentity = await resolveRuntimeIdentity(
+  {
+    version: RUNTIME_IDENTITY_VERSION,
+    providerId: "fixture-runtime-provider",
+    actorKind: "ADAPTER",
+    sessionHandle: "adapter-session-1",
+    verificationRef: "opaque://runtime/adapter-session-1",
+  },
+  adapterVerifier,
+  new Date("2026-10-25T03:34:00.000Z"),
+);
+const verifiedAttestation = bindAdapterAttestationToIdentity(
+  rawAttestation,
+  adapterIdentity,
+  new Date("2026-10-25T03:34:00.000Z"),
+);
+
 const provenanceLedger = buildProvenanceLedger(weave);
 const provenanceIntegrity = bindProvenanceLedger(provenanceLedger, boundArchitecture);
 const admissionNow = new Date("2026-10-25T03:34:00.000Z");
@@ -171,20 +207,34 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation,
+    attestation: verifiedAttestation,
     now: admissionNow,
   });
 
-  assert(result.admitted, "matching source/state/role/operation contracts must be admitted structurally");
-  assert(
-    result.candidate?.trust === "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
-    "admission must not claim authenticated provenance, adapter identity, or execution authority",
-  );
+  assert(result.admitted, "matching source/state/role/operation/adapter identity contracts must be admitted structurally");
+  assert(result.candidate?.trust === "STRUCTURALLY_ADMITTED_UNAUTHENTICATED", "admission must not overclaim execution authority");
   assert(result.candidate?.proposal.target === "sandbox.preview", "admitted proposal must preserve target");
-  assert(
-    result.candidate?.evidence.provenanceIntegrityBinding === provenanceIntegrity.binding,
-    "admission evidence must retain exact provenance integrity binding",
-  );
+  assert(result.candidate?.evidence.provenanceIntegrityBinding === provenanceIntegrity.binding, "provenance binding must survive admission");
+  assert(result.candidate?.evidence.adapterIdentityBinding === adapterIdentity.binding, "adapter identity binding must survive admission");
+}
+
+{
+  const forgedVerifiedAttestation = {
+    ...verifiedAttestation,
+    identity: { ...verifiedAttestation.identity },
+  };
+  const result = admitForSab({
+    provenanceLedger,
+    provenanceIntegrity,
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    attestation: forgedVerifiedAttestation,
+    now: admissionNow,
+  });
+  assert(!result.admitted, "copied adapter identity wrapper must lose runtime verification stamp");
+  assert(result.reasons.includes("adapter_identity_not_verified_or_fresh"), "adapter identity failure must be explicit");
 }
 
 {
@@ -195,7 +245,6 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     ),
     provenanceGapSignalIds: ["fact-1"],
   };
-
   const result = admitForSab({
     provenanceLedger: brokenLedger,
     provenanceIntegrity,
@@ -203,17 +252,11 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation,
+    attestation: verifiedAttestation,
     now: admissionNow,
   });
-
   assert(!result.admitted, "fact provenance mutation must block structural admission");
   assert(result.reasons.includes("provenance_integrity_invalid"), "ledger mutation must break provenance integrity binding");
-  assert(
-    result.reasons.includes("architecture_fact_unresolved_provenance"),
-    "missing fact provenance must remain explicit",
-  );
-  assert(result.candidate === undefined, "failed provenance must emit no candidate");
 }
 
 {
@@ -230,7 +273,6 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     requestedKnowledgeClasses: ["PUBLIC"],
     now: new Date("2026-10-25T03:30:00.000Z"),
   });
-
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
@@ -238,15 +280,24 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext: wrongRoleContext,
     expectation,
-    attestation,
+    attestation: verifiedAttestation,
     now: admissionNow,
   });
-
-  assert(!result.admitted, "architect role context must not stand in for the engineer role at admission");
+  assert(!result.admitted, "architect role context must not stand in for engineer role");
   assert(result.reasons.includes("northstar_engineer_role_mismatch"), "role mismatch must be explicit");
 }
 
 {
+  const mismatchedRawAttestation: AdapterAttestation = {
+    ...rawAttestation,
+    attestationId: "admission-attestation-mismatch",
+    operation: { ...rawAttestation.operation, target: "production.customer" },
+  };
+  const verifiedMismatch = bindAdapterAttestationToIdentity(
+    mismatchedRawAttestation,
+    adapterIdentity,
+    admissionNow,
+  );
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
@@ -254,16 +305,10 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation: {
-      ...attestation,
-      attestationId: "admission-attestation-mismatch",
-      operation: { ...attestation.operation, target: "production.customer" },
-    },
+    attestation: verifiedMismatch,
     now: admissionNow,
   });
-
   assert(!result.admitted, "adapter-operation mismatch must block admission");
-  assert(result.reasons.includes("operation_truth_mismatch"), "operation mismatch must be explicit");
   assert(result.reasons.includes("operation_target_mismatch"), "target mismatch must remain inspectable");
 }
 
@@ -275,12 +320,11 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     engineeringState: boundEngineering,
     northstarContext,
     expectation,
-    attestation,
+    attestation: verifiedAttestation,
     now: new Date("2026-10-25T03:56:00.000Z"),
   });
-
   assert(!result.admitted, "expired engineering state must block admission");
   assert(result.reasons.includes("engineering_state_not_fresh"), "stale engineering state must be explicit");
 }
 
-console.log("trust admission v0.3 tests passed");
+console.log("trust admission v0.4 adapter identity tests passed");

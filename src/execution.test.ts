@@ -11,6 +11,12 @@ import {
   persistArchitectureState,
   persistEngineeringState,
 } from "./replay-store.js";
+import {
+  RUNTIME_IDENTITY_VERSION,
+  bindAdapterAttestationToIdentity,
+  resolveRuntimeIdentity,
+  type RuntimeIdentityVerifier,
+} from "./runtime-identity.js";
 import { proposalBinding, SAB_POLICY_VERSION, type ApprovalRecord } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -187,7 +193,7 @@ const northstarContext = compileNorthstarContext({
   now: new Date("2026-10-25T06:25:00.000Z"),
 });
 
-const attestation: AdapterAttestation = {
+const rawAttestation: AdapterAttestation = {
   version: TRUST_SPINE_VERSION,
   attestationId: "execution-operation-attestation",
   requestId: engineering.packetId,
@@ -208,6 +214,40 @@ const attestation: AdapterAttestation = {
     containsSecrets: false,
   },
 };
+
+const adapterVerifier: RuntimeIdentityVerifier = {
+  providerId: "execution-runtime-provider",
+  async verify() {
+    return {
+      verified: true,
+      providerId: "execution-runtime-provider",
+      actorKind: "ADAPTER",
+      actorId: "staging-adapter-contract",
+      sessionId: "execution-adapter-session-1",
+      subjectRef: "fixture-runtime://adapter/staging-adapter-contract",
+      assurance: "SIGNED_ASSERTION",
+      authenticatedAt: "2026-10-25T06:00:00.000Z",
+      expiresAt: "2026-10-25T07:00:00.000Z",
+      revoked: false,
+    };
+  },
+};
+const adapterIdentity = await resolveRuntimeIdentity(
+  {
+    version: RUNTIME_IDENTITY_VERSION,
+    providerId: "execution-runtime-provider",
+    actorKind: "ADAPTER",
+    sessionHandle: "execution-adapter-session-1",
+    verificationRef: "opaque://execution/adapter-session-1",
+  },
+  adapterVerifier,
+  new Date("2026-10-25T06:31:00.000Z"),
+);
+const attestation = bindAdapterAttestationToIdentity(
+  rawAttestation,
+  adapterIdentity,
+  new Date("2026-10-25T06:31:00.000Z"),
+);
 
 const provenanceLedger = buildProvenanceLedger(weave);
 const admissionInput = {
@@ -270,10 +310,7 @@ const prepared = await preparePreExecution({
   now: new Date("2026-10-25T06:35:00.000Z"),
 });
 
-assert(
-  prepared.trust === "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED",
-  "pre-execution must not claim authenticated execution authority",
-);
+assert(prepared.trust === "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED", "pre-execution must not claim execution authority");
 assert(verifyPreExecutionRequest(prepared), "prepared request must verify");
 assert(prepared.sabRoute === "REQUIRE_HUMAN_APPROVAL", "sensitive staging write must retain human approval route");
 assert(prepared.expiresAt === approval.expiresAt, "shortest trust window must bound pre-execution lifetime");
@@ -384,7 +421,7 @@ await rejectsWith(
     now: new Date("2026-10-25T06:39:00.000Z"),
   }),
   "lifecycle_superseded",
-  "lifecycle superseded after preparation must fail the final execution precondition check",
+  "lifecycle superseded after preparation must fail final execution precondition check",
 );
 
-console.log("pre-execution, replay, TOCTOU, and receipt contract tests passed");
+console.log("pre-execution, adapter identity, replay, TOCTOU, and receipt contract tests passed");

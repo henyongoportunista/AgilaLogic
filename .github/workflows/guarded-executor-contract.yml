@@ -1,0 +1,37 @@
+name: Guarded Executor Contract
+
+on:
+  push:
+    branches:
+      - feat/runtime-identity-receipts-v0-1
+  pull_request:
+    branches:
+      - feat/trust-spine-v0-3-replay-rfi
+
+permissions:
+  contents: read
+
+jobs:
+  guarded-execution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck and build
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Guarded executor composition
+        run: node dist/guarded-executor.test.js

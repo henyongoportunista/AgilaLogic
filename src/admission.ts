@@ -8,6 +8,10 @@ import {
   verifyProvenanceIntegrity,
   type ProvenanceIntegrityEnvelope,
 } from "./provenance-integrity.js";
+import {
+  assertVerifiedAdapterAttestationFresh,
+  type VerifiedAdapterAttestation,
+} from "./runtime-identity.js";
 import type { UntrustedSabProposalCandidate } from "./strand.js";
 import {
   TRUST_SPINE_VERSION,
@@ -15,13 +19,12 @@ import {
   compareAdapterAttestation,
   verifyBoundArchitectureState,
   verifyBoundEngineeringState,
-  type AdapterAttestation,
   type BoundArchitectureState,
   type BoundEngineeringState,
   type ProvenanceLedger,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.3" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.4" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
@@ -30,7 +33,7 @@ export interface TrustAdmissionInput {
   engineeringState: BoundEngineeringState;
   northstarContext: NorthstarContextPack;
   expectation: UntrustedSabProposalCandidate;
-  attestation: AdapterAttestation;
+  attestation: VerifiedAdapterAttestation;
   now?: Date;
 }
 
@@ -45,6 +48,9 @@ export interface SabAdmissibleCandidate {
     northstarContextBinding: string;
     attestationId: string;
     adapterId: string;
+    adapterIdentityBinding: string;
+    adapterIdentityProviderId: string;
+    adapterIdentityAssurance: string;
     principal: string;
     roleId: string;
   };
@@ -90,10 +96,7 @@ function validateFactProvenance(
         entry.provenance.sourceClass !== "MODEL_DERIVED",
     );
 
-    if (!hasKnownOrigin) {
-      addOnce(reasons, "architecture_fact_unresolved_provenance");
-    }
-
+    if (!hasKnownOrigin) addOnce(reasons, "architecture_fact_unresolved_provenance");
     if (matches.some((entry) => ledger.provenanceGapSignalIds.includes(entry.signalId))) {
       addOnce(reasons, "architecture_fact_has_provenance_gap");
     }
@@ -101,20 +104,16 @@ function validateFactProvenance(
 }
 
 /**
- * Mandatory structural composition gate before a proposal may be presented to SAB.
- *
- * It does not authenticate the operator, adapter, provenance source, or model.
- * Provenance integrity here is deterministic/non-cryptographic mutation detection,
- * not source authentication or tamper-evident persistence against a capable attacker.
- * It does not call SAB and does not grant execution authority.
+ * Mandatory composition gate before a proposal may be presented to SAB.
+ * The `attestation` field is no longer a raw model/caller claim: it must be a
+ * process-resolved VerifiedAdapterAttestation bound to an external runtime
+ * identity verifier. This still does not grant execution authority.
  */
 export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
   const reasons: string[] = [];
   const now = input.now ?? new Date();
 
-  if (!Number.isFinite(now.getTime())) {
-    return { admitted: false, reasons: ["invalid_now"] };
-  }
+  if (!Number.isFinite(now.getTime())) return { admitted: false, reasons: ["invalid_now"] };
 
   if (!verifyBoundArchitectureState(input.architectureState)) {
     addOnce(reasons, "architecture_state_invalid");
@@ -139,14 +138,12 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
   if (input.engineeringState.architectureTrustBinding !== input.architectureState.trustBinding) {
     addOnce(reasons, "engineering_architecture_state_mismatch");
   }
-
   if (
     input.engineeringState.engineering.architectureBinding !==
     input.architectureState.architecture.architectureBinding
   ) {
     addOnce(reasons, "engineering_architecture_binding_mismatch");
   }
-
   if (input.engineeringState.engineering.intent !== "PROPOSAL_ONLY") {
     addOnce(reasons, "engineering_intent_not_proposal_only");
   }
@@ -178,13 +175,10 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     } catch {
       addOnce(reasons, "northstar_context_not_fresh");
     }
-
     if (input.northstarContext.roleId !== input.engineeringState.engineering.engineer) {
       addOnce(reasons, "northstar_engineer_role_mismatch");
     }
-    if (input.northstarContext.lane !== "ENGINEER") {
-      addOnce(reasons, "northstar_lane_mismatch");
-    }
+    if (input.northstarContext.lane !== "ENGINEER") addOnce(reasons, "northstar_lane_mismatch");
     if (input.northstarContext.authorityCeiling !== "PROPOSAL_ONLY") {
       addOnce(reasons, "northstar_authority_ceiling_mismatch");
     }
@@ -193,7 +187,14 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     }
   }
 
-  const operationComparison = compareAdapterAttestation(input.expectation, input.attestation, now);
+  try {
+    assertVerifiedAdapterAttestationFresh(input.attestation, now);
+  } catch {
+    addOnce(reasons, "adapter_identity_not_verified_or_fresh");
+  }
+
+  const rawAttestation = input.attestation.attestation;
+  const operationComparison = compareAdapterAttestation(input.expectation, rawAttestation, now);
   if (!operationComparison.matched || !operationComparison.candidate) {
     addOnce(reasons, "operation_truth_mismatch");
     for (const reason of operationComparison.reasons) addOnce(reasons, reason);
@@ -205,7 +206,7 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
 
   return {
     admitted: true,
-    reasons: ["source_state_role_and_operation_contracts_structurally_match"],
+    reasons: ["source_state_role_operation_and_adapter_identity_contracts_match"],
     candidate: {
       trust: "STRUCTURALLY_ADMITTED_UNAUTHENTICATED",
       admissionVersion: TRUST_ADMISSION_VERSION,
@@ -217,6 +218,9 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
         northstarContextBinding: input.northstarContext.contextBinding,
         attestationId: operationComparison.candidate.attestationId,
         adapterId: operationComparison.candidate.adapterId,
+        adapterIdentityBinding: input.attestation.identity.binding,
+        adapterIdentityProviderId: input.attestation.identity.providerId,
+        adapterIdentityAssurance: input.attestation.identity.assurance,
         principal: input.northstarContext.principal,
         roleId: input.northstarContext.roleId,
       },
