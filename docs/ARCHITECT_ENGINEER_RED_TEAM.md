@@ -2,7 +2,9 @@
 
 Status: **experimental architecture; only the HT→MT strand is executable in this branch**
 
-The unified architecture treats the fourteen roles as **bounded specialist disciplines**, not fourteen always-on autonomous bots.
+Canonical topology and implementation boundaries are defined in [`UNIFIED_ARCHITECTURE.md`](UNIFIED_ARCHITECTURE.md).
+
+The fourteen roles are **bounded specialist disciplines**, not fourteen always-on autonomous bots.
 
 ## Role pairing
 
@@ -11,14 +13,14 @@ The unified architecture treats the fourteen roles as **bounded specialist disci
 | HT — Henyong Tamad | MT — Madiskarteng Tamad | decide what deserves action → smallest useful implementation route |
 | PH — Pilosopong Hambog | MB — Matalinong Bobo | define architecture/invariants → challenge what can actually be defended |
 | TM — Tusong Martir | KM — Kalmadong Matador | threat-model/stress design → proportional resilience and failure handling |
-| MG — Mandarayang Galante | HO — Henyong Oportunista | architect resource abundance → convert resources into sustainable leverage |
+| MG — Mandarayang Galante | HO — Henyong Oportunista | architect resources → convert resources into sustainable leverage |
 | KP — Karismatikong Pinagnasaan | UO — Ugaling Oso | calibrate human interaction → preserve focus, commitment and boundaries |
 | MM — Metikulosong Matakaw | UM — Usiserong Matakaw | decide what information is worth consuming → extract useful intelligence |
 | EI — Edukadong Inggitero | IW — Inggiterong Wais | study/reverse-engineer external blueprints → adapt transferable mechanisms |
 
-The pairings are routing defaults, not identity, permissions, or hard dependencies. A task may invoke one pair, several roles, or an independent cross-checker.
+Pairing is a routing default. It is not identity, permission, credential scope, or a requirement that all fourteen roles run.
 
-## Control topology
+## Refined topology
 
 ```text
 NODE ALPHA / HUMAN INTENT
@@ -26,123 +28,149 @@ NODE ALPHA / HUMAN INTENT
           v
 GAGAMBA ARCHITECT DISCIPLINE(S)
           |
-   ArchitecturePacket
+ArchitecturePacket + machine-checkable IntentEnvelope
           |
           v
 AGILA ENGINEER DISCIPLINE(S)
           |
-   EngineeringPacket
-          |
-          v
-UNATTESTED ACTION PROPOSAL
-          |
-          v
-TRUSTED ADAPTER ATTESTATION   [future / not implemented]
-          |
-          v
+EngineeringPacket
+     /         |          \
+NO_ACTION  RFI_REQUIRED  PROPOSAL_ONLY
+             |               |
+             `----> architect | human clarification
+                             v
+                    UNATTESTED PROPOSAL
+                             |
+                             v
+TRUSTED ADAPTER ATTESTATION          [future]
+                             |
+                             v
 SAB POLICY BOUNDARY
-          |
-          v
-HUMAN AUTHORITY WHEN REQUIRED
-          |
-          v
-EXECUTION ADAPTER             [future / not implemented]
+                             |
+                 ALLOW / LOG / HUMAN / DENY
+                             |
+                             v
+EXECUTION + RECEIPT                  [future]
 ```
 
-## Red-team conclusions
+## P0 conclusions
 
-### P0 — Architects do not execute
+### Architects do not execute
 
-Architect roles may observe, model, constrain, compare, specify and challenge. They do not gain tool permissions, credentials, deployment rights or mutation authority from their persona name.
+Architect roles may observe, model, constrain, compare, specify and challenge. Their persona name never grants tool permissions, credentials, deployment rights or mutation authority.
 
-### P0 — Engineers do not silently rewrite architecture
+### Engineers do not silently rewrite architecture
 
-An engineer consumes a bound ArchitecturePacket. If architect constraints or candidate definitions drift, the handoff fails closed. A future engineer that discovers a contradiction should return an explicit request for interpretation/revision rather than mutating the architecture silently.
+An engineer consumes a bound ArchitecturePacket. Packet drift fails closed. If interpretation is incomplete, engineering returns `RFI_REQUIRED` rather than inventing certainty.
 
-### P0 — Engineer output is still untrusted at the security boundary
+### Free-text constraints are not enough
 
-An EngineeringPacket may produce a proposal candidate, but the engineer cannot self-certify action type, scope, data sensitivity, blast radius, cost, reversibility or secret status. `draftUntrustedSabProposal()` labels the result `UNATTESTED` on purpose.
+Earlier architecture preserved text such as `No production mutation`, but text preservation alone did not mechanically stop an engineer from drafting a production-scoped proposal.
 
-### P0 — SAB is not a persona
+The refined strand therefore adds a bound **Architecture IntentEnvelope** containing machine-checkable strategic bounds such as allowed scopes/actions/sensitivity, reversibility, secret handling, blast radius and optional cost ceiling.
 
-SAB is a deterministic policy boundary. Neither Gagamba nor Agila may bypass it because of confidence, role, seniority, consensus or personality framing.
+A proposal outside that envelope is rejected before SAB preview.
 
-### P1 — Avoid fourteen-agent committee explosion
+The IntentEnvelope is architecture intent, **not security attestation**.
 
-Fourteen roles are **available disciplines**, not mandatory simultaneous executions. Always invoking all fourteen would increase latency, token cost, contradiction load and summarization loss.
+### Unknown must remain unknown
 
-Recommended routing examples:
+If the bound architecture contains unresolved unknowns or Agila returns `ASK_USER`, the engineering intent becomes `RFI_REQUIRED`.
 
-- simple efficiency task: `HT → MT`
+`RFI_REQUIRED` cannot emit an action proposal.
+
+### Engineer output remains untrusted at the security boundary
+
+Even when a proposal fits the IntentEnvelope, the engineer cannot self-certify action type, scope, target, data sensitivity, blast radius, cost, reversibility or secret status.
+
+The proposal remains explicitly `UNATTESTED` until a future trusted adapter independently derives/verifies the concrete operation.
+
+### SAB is not a persona
+
+SAB is a deterministic policy boundary. Neither Gagamba nor Agila may bypass it because of confidence, seniority, consensus, cross-review or personality framing.
+
+## P1 conclusions
+
+### Avoid fourteen-agent committee explosion
+
+Fourteen roles are available disciplines, not mandatory simultaneous executions. Always invoking all fourteen increases latency, token cost, contradiction load and summarization loss.
+
+Examples:
+
+- simple bounded task: `HT → MT`
 - research/adaptation: `EI + MM → IW + UM`
 - security-sensitive design: `PH + TM + MM → MB + KM + UM → SAB`
-- major architecture change: relevant architects → synthesis → relevant engineers → independent cross-check → SAB
+- major architecture change: relevant architects → synthesis → relevant engineers → independent cross-review → SAB
 
-### P1 — Primary pairs cannot approve themselves
+### Primary pairs cannot approve themselves
 
-Semantic alignment can create pair echo chambers. Consequential work should use a cross-role reviewer. Examples:
+Semantic alignment can create pair echo chambers. Consequential work should use a cross-role reviewer.
+
+Examples:
 
 - `TM → KM → MB review`
 - `MG → HO → MM evidence review`
 
-Cross-review is an epistemic check, not execution authority.
+Cross-review is an epistemic/engineering check, not execution authority.
 
-### P1 — Persona controls lens, not permissions
+### Persona controls lens, not permissions
 
-A role may influence questions, evaluation criteria, output schema and review posture. It must not directly determine credentials, tool scope, authentication, authorization or policy exemptions.
-
-### P1 — Unknown must remain unknown
-
-Architect/engineer handoffs must preserve assumptions, predictions and unknowns as distinct from facts. Unresolved unknowns may require architect/human review; they may not be erased merely to obtain a cleaner engineering plan.
+Roles may influence questions, evaluation criteria, output schemas and review posture. They must not directly determine authentication, authorization, credentials, policy exemptions or tool scope.
 
 ## First executable strand: HT → MT
-
-This branch implements one deliberately narrow strand:
 
 ```text
 Gagamba signals
   → weaveSignals()
-  → HT ArchitecturePacket
-  → MT recomputes Agila decide() from the bound packet
-  → MT EngineeringPacket
+  → HT ArchitecturePacket + IntentEnvelope
+  → MT recomputes Agila decide() from the bound architecture
+  → NO_ACTION / RFI_REQUIRED / PROPOSAL_ONLY
   → optional UNATTESTED SAB proposal candidate
 ```
 
 Implemented protections:
 
-1. ArchitecturePacket has a deterministic non-cryptographic binding.
+1. ArchitecturePacket has deterministic non-cryptographic binding.
 2. Candidate metrics are runtime-validated before entering the packet.
-3. MT does not accept a caller-supplied Agila decision; it recomputes the decision from the bound packet.
-4. MT may only select a candidate that matches a candidate bound by HT. Derived ranking score is not treated as architect input.
-5. EngineeringPacket has its own deterministic non-cryptographic binding.
-6. Mutated architecture or engineering packets fail closed in the prototype.
-7. `NO_ACTION` cannot be converted into a SAB proposal.
-8. Any proposal metadata emitted from the engineering layer is explicitly `UNATTESTED`.
+3. IntentEnvelope is runtime-validated and included in the architecture binding.
+4. MT does not accept a caller-supplied Agila decision; it recomputes from bound architecture.
+5. MT may only select a candidate that matches a candidate bound by HT.
+6. EngineeringPacket preserves the IntentEnvelope and has its own deterministic non-cryptographic binding.
+7. Architecture or engineering packet drift fails closed in the prototype.
+8. unresolved uncertainty returns `RFI_REQUIRED` and cannot draft a proposal.
+9. `NO_ACTION` cannot draft a proposal.
+10. a proposal outside architected intent fails before SAB preview.
+11. proposal metadata emitted from engineering remains explicitly `UNATTESTED`.
 
-These bindings detect packet drift inside the prototype. They are **not** signatures, authentication, cryptographic integrity or durable provenance.
+The packet bindings are drift checks. They are **not** cryptographic signatures, authenticated identity, tamper-evident storage or trusted execution evidence.
 
-## What remains deliberately unimplemented
+## Deliberately unimplemented
 
-- the other six architect→engineer executable strands;
+- executable versions of the other six strands;
 - multi-role orchestration/routing policy;
-- independent cross-review scheduler;
+- independent versioned cross-review contract;
 - authenticated human identity;
 - cryptographic packet signing;
 - trusted adapter metadata attestation;
-- persistent proposal/approval/evidence storage;
+- persistent proposal/approval/evidence state;
 - real model-provider agents;
 - real mutation-capable execution adapters;
+- conformal risk control;
+- TEE / hardware-rooted attestation;
+- quantitative Active Inference / Free Energy computation;
 - claims that the fourteen software roles reproduce psychological or neuroscientific mechanisms.
 
 ## Expansion rule
 
-Do not implement all remaining pairs at once. For each new pair:
+For every new strand:
 
-1. define its input/output contract;
-2. identify what it is forbidden to decide;
-3. define a contradiction/RFI path;
-4. add adversarial tests;
-5. verify exact-head CI;
-6. only then add it to executable routing.
+1. define unique architect responsibility;
+2. define machine-checkable strategic bounds where possible;
+3. define what the engineer is forbidden to decide;
+4. define an explicit RFI/contradiction path;
+5. define an independent cross-reviewer for consequential work;
+6. add adversarial tests;
+7. verify exact-head CI;
+8. only then add it to executable routing.
 
-One verified strand is more useful than fourteen theatrical agents.
+> **One verified strand is stronger than fourteen theatrical agents.**
