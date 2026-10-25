@@ -218,6 +218,17 @@ const receipt = bindExecutionReceipt(permit, {
   evidenceRef: "opaque:executor-report",
 });
 
+const unknownReceipt = bindExecutionReceipt(permit, {
+  receiptId: "verification-unknown-receipt",
+  executionId: permit.executionId,
+  executorId: "reported-executor",
+  reportedProposal: { ...permit.proposal },
+  startedAt: "2026-10-25T10:30:10.000Z",
+  completedAt: "2026-10-25T10:30:20.000Z",
+  outcome: "UNKNOWN",
+  evidenceRef: "opaque:executor-unknown-report",
+});
+
 {
   const verification = bindExecutionVerification(receipt, permit, {
     verificationId: "verification-confirmed",
@@ -301,7 +312,6 @@ const receipt = bindExecutionReceipt(permit, {
 }
 
 {
-  const unknownReceipt = { ...receipt, outcome: "UNKNOWN" as const };
   throwsWith(
     () => bindExecutionVerification(unknownReceipt, permit, {
       verificationId: "unknown-confirmation",
@@ -310,8 +320,20 @@ const receipt = bindExecutionReceipt(permit, {
       observedOutcome: "UNKNOWN",
       verifiedAt: "2026-10-25T10:30:30.000Z",
     }),
-    "execution_receipt_invalid",
-    "tampering a receipt outcome to UNKNOWN must fail before verification semantics are evaluated",
+    "confirmed_verification_cannot_confirm_unknown",
+    "UNKNOWN executor outcome must not be upgraded to CONFIRMED",
+  );
+
+  throwsWith(
+    () => bindExecutionVerification(unknownReceipt, permit, {
+      verificationId: "unknown-contradiction",
+      verifierId: "independent-verifier",
+      status: "CONTRADICTED",
+      observedOutcome: "SUCCEEDED",
+      verifiedAt: "2026-10-25T10:30:30.000Z",
+    }),
+    "contradicted_verification_requires_known_outcomes",
+    "UNKNOWN executor outcome must be resolved as inconclusive evidence rather than contradiction",
   );
 }
 
