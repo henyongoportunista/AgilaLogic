@@ -6,7 +6,7 @@ import {
   type ExecutionReceipt,
 } from "./execution.js";
 
-export const EXECUTION_VERIFICATION_VERSION = "2026-10-25.1" as const;
+export const EXECUTION_VERIFICATION_VERSION = "2026-10-25.2" as const;
 
 export type ExecutionVerificationStatus = "CONFIRMED" | "CONTRADICTED" | "INCONCLUSIVE";
 
@@ -90,6 +90,9 @@ function validateStatusOutcome(
   observedOutcome: ExecutionOutcome | null,
 ): void {
   if (status === "CONFIRMED") {
+    if (reportedOutcome === "UNKNOWN" || observedOutcome === "UNKNOWN") {
+      throw new Error("confirmed_verification_cannot_confirm_unknown");
+    }
     if (observedOutcome === null || observedOutcome !== reportedOutcome) {
       throw new Error("confirmed_verification_requires_matching_observed_outcome");
     }
@@ -97,6 +100,9 @@ function validateStatusOutcome(
   }
 
   if (status === "CONTRADICTED") {
+    if (reportedOutcome === "UNKNOWN" || observedOutcome === "UNKNOWN") {
+      throw new Error("contradicted_verification_requires_known_outcomes");
+    }
     if (observedOutcome === null || observedOutcome === reportedOutcome) {
       throw new Error("contradicted_verification_requires_different_observed_outcome");
     }
@@ -109,6 +115,10 @@ function validateStatusOutcome(
 /**
  * Creates a separate verification artifact over an executor receipt.
  * This never rewrites the executor-reported outcome and does not authenticate the verifier.
+ *
+ * v0.2 additionally requires the verifier identifier to differ from the executor
+ * identifier. This is structural separation only; it does not cryptographically
+ * prove that two identifiers represent independent real-world principals.
  */
 export function bindExecutionVerification(
   receipt: ExecutionReceipt,
@@ -118,6 +128,11 @@ export function bindExecutionVerification(
   if (!verifyExecutionPermit(permit)) throw new Error("execution_permit_invalid");
   if (!verifyExecutionReceipt(receipt, permit)) throw new Error("execution_receipt_invalid");
   if (!STATUSES.has(input.status)) throw new TypeError("invalid_execution_verification_status");
+
+  const verifierId = boundedText(input.verifierId, MAX_ID_LENGTH, "execution_verifier_id");
+  if (verifierId === receipt.executorId) {
+    throw new Error("execution_verifier_must_differ_from_executor");
+  }
 
   const observedOutcome = input.observedOutcome ?? null;
   if (observedOutcome !== null && !OUTCOMES.has(observedOutcome)) {
@@ -135,7 +150,7 @@ export function bindExecutionVerification(
     version: EXECUTION_VERIFICATION_VERSION,
     trust: "EXECUTION_VERIFICATION_REPORTED_UNAUTHENTICATED_VERIFIER",
     verificationId: boundedText(input.verificationId, MAX_ID_LENGTH, "execution_verification_id"),
-    verifierId: boundedText(input.verifierId, MAX_ID_LENGTH, "execution_verifier_id"),
+    verifierId,
     receiptBinding: receipt.binding,
     permitBinding: permit.binding,
     executionId: receipt.executionId,
@@ -171,6 +186,7 @@ export function verifyExecutionVerification(
   if (verification.executionId !== receipt.executionId) return false;
   if (verification.proposalBinding !== receipt.proposalBinding) return false;
   if (verification.reportedOutcome !== receipt.outcome) return false;
+  if (verification.verifierId === receipt.executorId) return false;
 
   try {
     boundedText(verification.verificationId, MAX_ID_LENGTH, "execution_verification_id");
