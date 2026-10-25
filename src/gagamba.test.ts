@@ -1,4 +1,5 @@
 import { weaveSignals } from "./gagamba.js";
+import type { GagambaSignal } from "./gagamba.js";
 import { decide } from "./orchestrator.js";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -99,6 +100,21 @@ const candidate = {
     woven.trace.reasons.includes("invalid_signal_confidence"),
     "expected invalid confidence reason",
   );
+}
+
+{
+  const invalidKind = {
+    id: "bad-kind",
+    kind: "ASSERTED_TRUTH",
+    text: "A runtime caller must not invent a new epistemic class.",
+  } as unknown as GagambaSignal;
+
+  const woven = weaveSignals({ signals: [invalidKind], candidates: [] });
+
+  assertDeepEqual(woven.trace.acceptedSignalIds, [], "invalid kind must not be accepted");
+  assertDeepEqual(woven.trace.withheldSignalIds, ["bad-kind"], "invalid kind withheld id");
+  assert(woven.trace.reasons.includes("invalid_signal_kind"), "expected invalid signal kind reason");
+  assert(woven.observation.facts.length === 0, "invalid kind must not leak into facts");
 }
 
 console.log("gagamba tests passed");
