@@ -12,7 +12,7 @@ import {
   type ExecutionVerificationStatus,
 } from "./execution-verification.js";
 
-export const EXECUTION_LEDGER_VERSION = "2026-10-25.1" as const;
+export const EXECUTION_LEDGER_VERSION = "2026-10-25.2" as const;
 
 export type ExecutionLedgerStatus = "RESERVED" | "STARTED" | "COMPLETED";
 
@@ -103,6 +103,14 @@ function bindEntry(entry: Omit<ExecutionLedgerEntry, "binding">): ExecutionLedge
   return { ...entry, binding: entryBinding(entry) };
 }
 
+function entryPayload(entry: ExecutionLedgerEntry): Omit<ExecutionLedgerEntry, "binding"> {
+  const { binding: _binding, ...payload } = entry;
+  return {
+    ...payload,
+    verifications: payload.verifications.map((verification) => ({ ...verification })),
+  };
+}
+
 function bindLedger(entries: ExecutionLedgerEntry[]): ExecutionLedger {
   const payload: Omit<ExecutionLedger, "binding"> = {
     version: EXECUTION_LEDGER_VERSION,
@@ -131,8 +139,10 @@ function verifyEntry(entry: ExecutionLedgerEntry): boolean {
   if (!Array.isArray(entry.verifications) || !entry.verifications.every(verifyVerificationRef)) return false;
 
   const verificationIds = entry.verifications.map((verification) => verification.verificationId);
+  const verifierIds = entry.verifications.map((verification) => verification.verifierId);
   const verificationBindings = entry.verifications.map((verification) => verification.verificationBinding);
   if (new Set(verificationIds).size !== verificationIds.length) return false;
+  if (new Set(verifierIds).size !== verifierIds.length) return false;
   if (new Set(verificationBindings).size !== verificationBindings.length) return false;
 
   try {
@@ -287,10 +297,9 @@ export function startExecution(
   }
 
   const updated = bindEntry({
-    ...entry,
+    ...entryPayload(entry),
     status: "STARTED",
     startedAt: startedAt.toISOString(),
-    binding: undefined as never,
   });
 
   return bindLedger(ledger.entries.map((candidate) => (candidate.executionId === entry.executionId ? updated : candidate)));
@@ -308,12 +317,11 @@ export function completeExecution(
   if (entry.startedAt !== receipt.startedAt) throw new Error("execution_receipt_start_mismatch");
 
   const updated = bindEntry({
-    ...entry,
+    ...entryPayload(entry),
     status: "COMPLETED",
     completedAt: receipt.completedAt,
     receiptBinding: receipt.binding,
     outcome: receipt.outcome,
-    binding: undefined as never,
   });
 
   return bindLedger(ledger.entries.map((candidate) => (candidate.executionId === entry.executionId ? updated : candidate)));
@@ -336,12 +344,15 @@ export function attachExecutionVerification(
   if (entry.verifications.some((item) => item.verificationId === verification.verificationId)) {
     throw new Error("execution_verification_id_already_recorded");
   }
+  if (entry.verifications.some((item) => item.verifierId === verification.verifierId)) {
+    throw new Error("execution_verifier_already_recorded");
+  }
   if (entry.verifications.some((item) => item.verificationBinding === verification.binding)) {
     throw new Error("execution_verification_already_recorded");
   }
 
   const updated = bindEntry({
-    ...entry,
+    ...entryPayload(entry),
     verifications: [
       ...entry.verifications,
       {
@@ -351,7 +362,6 @@ export function attachExecutionVerification(
         status: verification.status,
       },
     ],
-    binding: undefined as never,
   });
 
   return bindLedger(ledger.entries.map((candidate) => (candidate.executionId === entry.executionId ? updated : candidate)));
