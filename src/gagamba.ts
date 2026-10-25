@@ -1,6 +1,6 @@
 import type { CandidateAction, ObservationInput } from "./types.js";
 
-export const GAGAMBA_WEAVE_VERSION = "2026-10-25.1" as const;
+export const GAGAMBA_WEAVE_VERSION = "2026-10-25.2" as const;
 
 export type GagambaSignalKind =
   | "FACT"
@@ -46,6 +46,16 @@ const MAX_SIGNAL_ID_LENGTH = 160;
 const MAX_SIGNAL_TEXT_LENGTH = 1000;
 const MAX_SOURCE_LENGTH = 300;
 
+const SIGNAL_KINDS = new Set<GagambaSignalKind>([
+  "FACT",
+  "INFERENCE",
+  "PREDICTION",
+  "PREFERENCE",
+  "UNKNOWN",
+  "CONSTRAINT",
+  "RESOURCE",
+]);
+
 function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -53,6 +63,7 @@ function normalizeText(value: string): string {
 function validateSignal(signal: GagambaSignal): string | undefined {
   if (typeof signal.id !== "string" || signal.id.trim().length === 0) return "invalid_signal_id";
   if (signal.id.length > MAX_SIGNAL_ID_LENGTH) return "signal_id_too_long";
+  if (!SIGNAL_KINDS.has(signal.kind)) return "invalid_signal_kind";
   if (typeof signal.text !== "string" || normalizeText(signal.text).length === 0) return "invalid_signal_text";
   if (signal.text.length > MAX_SIGNAL_TEXT_LENGTH) return "signal_text_too_long";
 
@@ -83,6 +94,10 @@ function validateSignal(signal: GagambaSignal): string | undefined {
  * Epistemic rule: inference/prediction must not silently become fact.
  */
 export function weaveSignals(intake: GagambaIntake): GagambaWeaveResult {
+  if (typeof intake !== "object" || intake === null) throw new TypeError("invalid_gagamba_intake");
+  if (!Array.isArray(intake.signals)) throw new TypeError("signals_not_array");
+  if (!Array.isArray(intake.candidates)) throw new TypeError("candidates_not_array");
+
   const facts: string[] = [];
   const unknowns: string[] = [];
   const constraints: string[] = [];
@@ -100,7 +115,7 @@ export function weaveSignals(intake: GagambaIntake): GagambaWeaveResult {
   for (const signal of intake.signals) {
     const invalidReason = validateSignal(signal);
     if (invalidReason) {
-      withheldSignalIds.push(signal.id || "<missing>");
+      withheldSignalIds.push(signal?.id || "<missing>");
       reasons.push(invalidReason);
       continue;
     }
