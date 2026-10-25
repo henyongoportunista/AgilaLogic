@@ -88,6 +88,12 @@ export type {
   PrincipalContext,
   PrincipalVerification,
 } from "./northstar.js";
+export { TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
+export type {
+  SabAdmissibleCandidate,
+  TrustAdmissionInput,
+  TrustAdmissionResult,
+} from "./admission.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {
