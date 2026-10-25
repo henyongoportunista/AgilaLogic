@@ -94,6 +94,11 @@ export type {
   LifecycleStorageClass,
   StoredLifecycleRegistry,
 } from "./replay-store.js";
+export {
+  SUPABASE_REPLAY_STORE_VERSION,
+  createSupabaseLifecycleRegistryStore,
+} from "./supabase-replay-store.js";
+export type { SupabaseReplayStoreConfig } from "./supabase-replay-store.js";
 export { RFI_RESOLUTION_VERSION, prepareRfiReinjection } from "./rfi-resolution.js";
 export type {
   RfiReinjection,
