@@ -4,6 +4,11 @@ import {
   type SabAdmissibleCandidate,
 } from "./admission.js";
 import {
+  assertResourcePreconditionFresh,
+  verifyResourcePreconditionArtifact,
+  type ResourcePrecondition,
+} from "./resource-precondition.js";
+import {
   SAB_POLICY_VERSION,
   evaluateProposal,
   isExecutionAuthorized,
@@ -14,7 +19,7 @@ import {
   type SabRoute,
 } from "./sab.js";
 
-export const EXECUTION_CONTRACT_VERSION = "2026-10-25.1" as const;
+export const EXECUTION_CONTRACT_VERSION = "2026-10-25.2" as const;
 
 export type ExecutionOutcome = "SUCCEEDED" | "FAILED" | "PARTIAL" | "UNKNOWN";
 
@@ -29,6 +34,7 @@ export interface ExecutionPermit {
   sabRoute: Exclude<SabRoute, "DENY">;
   policyVersion: typeof SAB_POLICY_VERSION;
   approvalSnapshotBinding: string | null;
+  resourcePrecondition: ResourcePrecondition | null;
   issuedAt: string;
   expiresAt: string;
   binding: string;
@@ -39,6 +45,7 @@ export interface IssueExecutionPermitInput {
   executionId: string;
   candidate: SabAdmissibleCandidate;
   approval?: ApprovalRecord;
+  resourcePrecondition?: ResourcePrecondition;
   now?: Date;
 }
 
@@ -63,6 +70,7 @@ export interface ExecutionReceipt {
   permitBinding: string;
   admissionBinding: string;
   proposalBinding: string;
+  resourcePreconditionBinding: string | null;
   startedAt: string;
   completedAt: string;
   outcome: ExecutionOutcome;
@@ -79,6 +87,12 @@ const PERMITTED_ROUTES = new Set<Exclude<SabRoute, "DENY">>([
   "ALLOW",
   "ALLOW_WITH_LOG",
   "REQUIRE_HUMAN_APPROVAL",
+]);
+const RESOURCE_PRECONDITION_ACTIONS = new Set<ActionProposal["type"]>([
+  "WRITE",
+  "DELETE",
+  "PRODUCTION_DEPLOY",
+  "PERMISSION_CHANGE",
 ]);
 
 function normalize(value: string): string {
@@ -129,15 +143,18 @@ function approvalSnapshotBinding(approval?: ApprovalRecord): string | null {
   return approval === undefined ? null : canonicalString(approval);
 }
 
+function requiresResourcePrecondition(proposal: ActionProposal): boolean {
+  return RESOURCE_PRECONDITION_ACTIONS.has(proposal.type);
+}
+
 /**
- * Issues a short-lived structural permit only after Trust Admission is still fresh
- * and the current SAB policy says the proposal is authorized.
+ * Issues a short-lived structural permit only after Trust Admission is fresh,
+ * current SAB policy authorizes the proposal, and mutating resource operations
+ * carry a fresh exact resource precondition.
  *
- * The execution ID is bound at issuance so one permit represents one intended
- * execution identity. Durable idempotency still requires persistent backend state.
- *
- * ApprovalRecord identity is not authenticated by this prototype, so the trust
- * label remains explicit about that limitation when human approval is required.
+ * The precondition is still adapter-reported and unauthenticated in this prototype.
+ * Real TOCTOU protection requires the executor to enforce the version/reservation
+ * token atomically at write time.
  */
 export function issueExecutionPermit(input: IssueExecutionPermitInput): ExecutionPermit {
   const now = input.now ?? new Date();
@@ -145,15 +162,28 @@ export function issueExecutionPermit(input: IssueExecutionPermitInput): Executio
   if (!verifySabAdmissibleCandidate(input.candidate)) throw new Error("admission_candidate_invalid");
   assertSabAdmissibleCandidateFresh(input.candidate, now);
 
+  const preconditionRequired = requiresResourcePrecondition(input.candidate.proposal);
+  if (preconditionRequired && input.resourcePrecondition === undefined) {
+    throw new Error("resource_precondition_required");
+  }
+  if (input.resourcePrecondition !== undefined) {
+    assertResourcePreconditionFresh(input.resourcePrecondition, input.candidate, now);
+  }
+
   const decision = evaluateProposal(input.candidate.proposal);
   if (decision.route === "DENY") throw new Error("sab_denied_execution_permit");
   if (!isExecutionAuthorized(input.candidate.proposal, input.approval, now)) {
     throw new Error("sab_execution_not_authorized");
   }
 
-  const candidateExpiry = parseIsoInstant(input.candidate.validUntil, "admission_valid_until").getTime();
-  const localExpiry = now.getTime() + MAX_PERMIT_TTL_MS;
-  const expiresAt = new Date(Math.min(candidateExpiry, localExpiry));
+  const expiries = [
+    parseIsoInstant(input.candidate.validUntil, "admission_valid_until").getTime(),
+    now.getTime() + MAX_PERMIT_TTL_MS,
+  ];
+  if (input.resourcePrecondition !== undefined) {
+    expiries.push(parseIsoInstant(input.resourcePrecondition.expiresAt, "resource_precondition_expires_at").getTime());
+  }
+  const expiresAt = new Date(Math.min(...expiries));
   if (expiresAt.getTime() <= now.getTime()) throw new Error("execution_permit_window_empty");
 
   const payload: Omit<ExecutionPermit, "binding"> = {
@@ -167,6 +197,7 @@ export function issueExecutionPermit(input: IssueExecutionPermitInput): Executio
     sabRoute: decision.route,
     policyVersion: SAB_POLICY_VERSION,
     approvalSnapshotBinding: decision.requiresApproval ? approvalSnapshotBinding(input.approval) : null,
+    resourcePrecondition: input.resourcePrecondition === undefined ? null : { ...input.resourcePrecondition },
     issuedAt: now.toISOString(),
     expiresAt: expiresAt.toISOString(),
   };
@@ -183,6 +214,15 @@ export function verifyExecutionPermit(permit: ExecutionPermit): boolean {
   if (validateProposal(permit.proposal).length > 0) return false;
   if (permit.proposalBinding !== proposalBinding(permit.proposal)) return false;
 
+  const preconditionRequired = requiresResourcePrecondition(permit.proposal);
+  if (preconditionRequired && permit.resourcePrecondition === null) return false;
+  if (permit.resourcePrecondition !== null) {
+    if (!verifyResourcePreconditionArtifact(permit.resourcePrecondition)) return false;
+    if (permit.resourcePrecondition.admissionBinding !== permit.admissionBinding) return false;
+    if (permit.resourcePrecondition.proposalBinding !== permit.proposalBinding) return false;
+    if (permit.resourcePrecondition.target !== permit.proposal.target) return false;
+  }
+
   try {
     boundedText(permit.permitId, MAX_ID_LENGTH, "execution_permit_id");
     boundedText(permit.executionId, MAX_ID_LENGTH, "execution_id");
@@ -191,6 +231,13 @@ export function verifyExecutionPermit(permit: ExecutionPermit): boolean {
     const expiresAt = parseIsoInstant(permit.expiresAt, "execution_permit_expires_at");
     if (expiresAt.getTime() <= issuedAt.getTime()) return false;
     if (expiresAt.getTime() - issuedAt.getTime() > MAX_PERMIT_TTL_MS) return false;
+    if (permit.resourcePrecondition !== null) {
+      const preconditionExpiry = parseIsoInstant(
+        permit.resourcePrecondition.expiresAt,
+        "resource_precondition_expires_at",
+      );
+      if (expiresAt.getTime() > preconditionExpiry.getTime()) return false;
+    }
     if (permit.sabRoute === "REQUIRE_HUMAN_APPROVAL") {
       if (typeof permit.approvalSnapshotBinding !== "string" || permit.approvalSnapshotBinding.length === 0) return false;
     } else if (permit.approvalSnapshotBinding !== null) {
@@ -248,6 +295,7 @@ export function bindExecutionReceipt(
     permitBinding: permit.binding,
     admissionBinding: permit.admissionBinding,
     proposalBinding: permit.proposalBinding,
+    resourcePreconditionBinding: permit.resourcePrecondition?.binding ?? null,
     startedAt: startedAt.toISOString(),
     completedAt: completedAt.toISOString(),
     outcome: input.outcome,
@@ -272,6 +320,7 @@ export function verifyExecutionReceipt(receipt: ExecutionReceipt, permit: Execut
   if (receipt.permitBinding !== permit.binding) return false;
   if (receipt.admissionBinding !== permit.admissionBinding) return false;
   if (receipt.proposalBinding !== permit.proposalBinding) return false;
+  if (receipt.resourcePreconditionBinding !== (permit.resourcePrecondition?.binding ?? null)) return false;
 
   try {
     boundedText(receipt.receiptId, MAX_ID_LENGTH, "execution_receipt_id");
