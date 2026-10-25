@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node dist/orchestrator.test.js && node dist/gagamba.test.js && node dist/strand.test.js && node dist/axiom.test.js && node dist/northstar.test.js && node dist/trust.test.js && node dist/admission.test.js && node dist/sab.test.js && node dist/supabase.test.js",
+    "test": "npm run build && node dist/orchestrator.test.js && node dist/gagamba.test.js && node dist/strand.test.js && node dist/axiom.test.js && node dist/northstar.test.js && node dist/trust.test.js && node dist/hardening.test.js && node dist/admission.test.js && node dist/sab.test.js && node dist/supabase.test.js",
     "ci": "npm run typecheck && npm test",
     "demo": "npm run build && node demo/server.mjs"
   },
