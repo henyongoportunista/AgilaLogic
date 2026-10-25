@@ -125,6 +125,21 @@ export type {
   PrincipalContext,
   PrincipalVerification,
 } from "./northstar.js";
+export {
+  EXTERNAL_AUTH_BOUNDARY_VERSION,
+  createPublicPrincipalContext,
+  resolveVerifiedPrincipalContext,
+} from "./external-auth.js";
+export type {
+  AuthenticationAssurance,
+  ExternalAuthEvidence,
+  ExternalPrincipalVerifier,
+  ExternalSessionVerification,
+  RejectedExternalSession,
+  VerifiedExternalSession,
+  VerifiedOperatorPrincipal,
+  VerifiedPrincipalContext,
+} from "./external-auth.js";
 export { TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
 export type {
   SabAdmissibleCandidate,
