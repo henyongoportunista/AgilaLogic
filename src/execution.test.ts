@@ -1,3 +1,8 @@
+import {
+  EXTERNAL_AUTH_BOUNDARY_VERSION,
+  resolveVerifiedPrincipalContext,
+  type ExternalPrincipalVerifier,
+} from "./external-auth.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
@@ -134,15 +139,39 @@ const expectation = draftUntrustedSabProposal(engineering, "execution-proposal",
   containsSecrets: false,
 });
 
+const salVerifier: ExternalPrincipalVerifier = {
+  providerId: "execution-auth-provider",
+  async verify() {
+    return {
+      verified: true,
+      providerId: "execution-auth-provider",
+      principal: "VERIFIED_SAL",
+      sessionId: "external-session-sal-1",
+      subjectRef: "fixture-subject://sal",
+      assurance: "PHISHING_RESISTANT_MFA",
+      authenticatedAt: "2026-10-25T06:00:00.000Z",
+      expiresAt: "2026-10-25T07:00:00.000Z",
+      revoked: false,
+    };
+  },
+};
+
+const salPrincipalContext = (
+  await resolveVerifiedPrincipalContext(
+    {
+      version: EXTERNAL_AUTH_BOUNDARY_VERSION,
+      providerId: "execution-auth-provider",
+      sessionHandle: "external-session-sal-1",
+      verificationRef: "opaque://execution/sal-session-1",
+    },
+    salVerifier,
+    new Date("2026-10-25T06:25:00.000Z"),
+  )
+).principalContext;
+
 const northstarContext = compileNorthstarContext({
   roleId: "MT",
-  principalContext: {
-    principal: "VERIFIED_SAL",
-    verification: "EXTERNAL_AUTH",
-    sessionId: "external-session-sal-1",
-    issuedAt: "2026-10-25T06:00:00.000Z",
-    expiresAt: "2026-10-25T07:00:00.000Z",
-  },
+  principalContext: salPrincipalContext,
   architectureVersion: ARCHITECT_ENGINEER_STRAND_VERSION,
   requestedKnowledgeClasses: ["PUBLIC", "INTERNAL"],
   now: new Date("2026-10-25T06:25:00.000Z"),
