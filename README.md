@@ -39,6 +39,28 @@ See:
 - [`docs/GAGAMBA_AGILA_WEAVE.md`](docs/GAGAMBA_AGILA_WEAVE.md) — source-to-software weave contract
 - [`docs/ARCHITECT_ENGINEER_RED_TEAM.md`](docs/ARCHITECT_ENGINEER_RED_TEAM.md) — red-team rules and expansion discipline
 
+## Universal quality protocol — ROEM
+
+`REFINEMENT → OPPORTUNITIES → ENHANCEMENT → MITIGATION`
+
+ROEM is the project quality/evolution loop. It does not grant execution authority and it does not replace SAB.
+
+Current applied phase: **R — Refinement**.
+
+Phase 1 preserves the working architecture while removing ambiguity and representational noise. Current refinements include:
+
+- runtime validation of the Gagamba signal taxonomy;
+- normalized unique candidate identifiers;
+- canonical ordering of set-like IntentEnvelope values so equivalent intent does not create meaningless binding drift;
+- explicit calibration that numeric `estimatedCost` has no production currency/unit guarantee yet.
+
+No new agents, external integrations, executor, or production authority are introduced by Phase 1.
+
+See:
+
+- [`docs/ROEM_PROTOCOL.md`](docs/ROEM_PROTOCOL.md)
+- [`docs/ROEM_PHASE1_REFINEMENT.md`](docs/ROEM_PHASE1_REFINEMENT.md)
+
 ## Executable prototype — Sovereign Scaffold
 
 **Capability ≠ Authority.**
