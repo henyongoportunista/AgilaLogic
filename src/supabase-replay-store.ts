@@ -1,9 +1,10 @@
 import {
   LIFECYCLE_STORE_VERSION,
+  assertStoredLifecycleRegistry,
   type LifecycleRegistryStore,
   type StoredLifecycleRegistry,
 } from "./replay-store.js";
-import type { LifecycleRegistry } from "./replay.js";
+import { REPLAY_GUARD_VERSION, type LifecycleRegistry } from "./replay.js";
 import type { SupabaseRuntimeConfig } from "./supabase.js";
 
 export const SUPABASE_REPLAY_STORE_VERSION = "2026-10-25.1" as const;
@@ -38,7 +39,7 @@ function parseRegistry(value: unknown): LifecycleRegistry {
   }
 
   const record = value as Record<string, unknown>;
-  if (typeof record.version !== "string" || !Array.isArray(record.entries)) {
+  if (record.version !== REPLAY_GUARD_VERSION || !Array.isArray(record.entries)) {
     throw new Error("lifecycle_store_registry_invalid");
   }
 
@@ -51,12 +52,14 @@ function parseStoredRow(row: LifecycleRegistryRow, expectedContextId: string): S
     throw new Error("lifecycle_store_revision_invalid");
   }
 
-  return {
+  const stored: StoredLifecycleRegistry = {
     version: LIFECYCLE_STORE_VERSION,
     contextId: row.context_id,
     revision: row.revision,
     registry: parseRegistry(row.registry),
   };
+  assertStoredLifecycleRegistry(stored, expectedContextId);
+  return stored;
 }
 
 /**
@@ -120,6 +123,7 @@ export function createSupabaseLifecycleRegistryStore(
       if (next.revision !== (expectedRevision ?? 0) + 1) {
         throw new Error("lifecycle_store_revision_jump");
       }
+      assertStoredLifecycleRegistry(next, contextId);
 
       return rpc<boolean>("henyong_lifecycle_registry_cas", {
         p_context_id: contextId,
