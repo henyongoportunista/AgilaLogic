@@ -1,6 +1,11 @@
 import { decide } from "./orchestrator.js";
 import type { GagambaWeaveResult } from "./gagamba.js";
-import type { ActionProposal } from "./sab.js";
+import type {
+  ActionProposal,
+  ActionScope,
+  ActionType,
+  DataSensitivity,
+} from "./sab.js";
 import type {
   AgentPolicy,
   CandidateAction,
@@ -10,7 +15,7 @@ import type {
   RankedCandidate,
 } from "./types.js";
 
-export const ARCHITECT_ENGINEER_STRAND_VERSION = "2026-10-25.2" as const;
+export const ARCHITECT_ENGINEER_STRAND_VERSION = "2026-10-25.3" as const;
 
 export type GagambaArchitectId = "HT" | "PH" | "TM" | "MG" | "KP" | "MM" | "EI";
 export type AgilaEngineerId = "MT" | "MB" | "KM" | "HO" | "UO" | "UM" | "IW";
@@ -35,6 +40,20 @@ export const ARCHITECT_ENGINEER_PAIRS: readonly ArchitectEngineerPair[] = [
   { architect: "EI", engineer: "IW", responsibility: "study external blueprints; adapt transferable mechanisms" },
 ] as const;
 
+/**
+ * Machine-checkable strategic intent. This constrains what an engineer may
+ * propose; it is not authentication, security attestation, or SAB policy.
+ */
+export interface ArchitectureIntentEnvelope {
+  allowedActionTypes: ActionType[];
+  allowedScopes: ActionScope[];
+  allowedDataSensitivities: DataSensitivity[];
+  requireReversible: boolean;
+  allowSecrets: boolean;
+  maxAffectedRecords?: number;
+  maxEstimatedCost?: number;
+}
+
 export interface ArchitecturePacket {
   version: typeof ARCHITECT_ENGINEER_STRAND_VERSION;
   packetId: string;
@@ -50,6 +69,7 @@ export interface ArchitecturePacket {
   successCriteria: string[];
   nonGoals: string[];
   candidates: CandidateAction[];
+  intentEnvelope: ArchitectureIntentEnvelope;
   sourceWeaveVersion: string;
   architectureBinding: string;
 }
@@ -60,9 +80,10 @@ export interface HtArchitectureInput {
   weave: GagambaWeaveResult;
   successCriteria: string[];
   nonGoals?: string[];
+  intentEnvelope: ArchitectureIntentEnvelope;
 }
 
-export type EngineeringIntent = "NO_ACTION" | "PROPOSAL_ONLY";
+export type EngineeringIntent = "NO_ACTION" | "RFI_REQUIRED" | "PROPOSAL_ONLY";
 
 export interface EngineeringPacket {
   version: typeof ARCHITECT_ENGINEER_STRAND_VERSION;
@@ -74,6 +95,7 @@ export interface EngineeringPacket {
   decisionReasons: string[];
   selectedCandidate?: RankedCandidate;
   preservedConstraints: string[];
+  preservedIntentEnvelope: ArchitectureIntentEnvelope;
   unresolvedUnknowns: string[];
   intent: EngineeringIntent;
   requiresArchitectReview: boolean;
@@ -105,6 +127,30 @@ const MAX_PACKET_ID_LENGTH = 160;
 const MAX_OBJECTIVE_LENGTH = 2000;
 const MAX_LIST_ITEM_LENGTH = 2000;
 const MAX_LIST_ITEMS = 100;
+
+const ACTION_TYPES = new Set<ActionType>([
+  "READ",
+  "DRAFT",
+  "WRITE",
+  "DELETE",
+  "PAYMENT",
+  "EXTERNAL_MESSAGE",
+  "PRODUCTION_DEPLOY",
+  "PERMISSION_CHANGE",
+]);
+const ACTION_SCOPES = new Set<ActionScope>([
+  "LOCAL",
+  "SANDBOX",
+  "STAGING",
+  "PRODUCTION",
+  "EXTERNAL",
+]);
+const DATA_SENSITIVITIES = new Set<DataSensitivity>([
+  "PUBLIC",
+  "INTERNAL",
+  "SENSITIVE",
+  "SECRET",
+]);
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -139,6 +185,68 @@ function validateCandidate(candidate: CandidateAction): void {
   if (candidate.informationGain !== undefined && !validUnit(candidate.informationGain)) {
     throw new TypeError("invalid_candidate_information_gain");
   }
+}
+
+function uniqueKnownValues<T extends string>(
+  values: T[],
+  allowed: ReadonlySet<T>,
+  label: string,
+): T[] {
+  if (!Array.isArray(values) || values.length === 0) throw new TypeError(`${label}_required`);
+  const normalized = [...new Set(values)];
+  if (normalized.some((value) => !allowed.has(value))) throw new TypeError(`invalid_${label}`);
+  return normalized;
+}
+
+function validateIntentEnvelope(envelope: ArchitectureIntentEnvelope): ArchitectureIntentEnvelope {
+  if (typeof envelope !== "object" || envelope === null) {
+    throw new TypeError("intent_envelope_required");
+  }
+  if (typeof envelope.requireReversible !== "boolean") {
+    throw new TypeError("invalid_require_reversible");
+  }
+  if (typeof envelope.allowSecrets !== "boolean") {
+    throw new TypeError("invalid_allow_secrets");
+  }
+  if (
+    envelope.maxAffectedRecords !== undefined &&
+    (!Number.isInteger(envelope.maxAffectedRecords) || envelope.maxAffectedRecords < 0)
+  ) {
+    throw new TypeError("invalid_max_affected_records");
+  }
+  if (
+    envelope.maxEstimatedCost !== undefined &&
+    (!Number.isFinite(envelope.maxEstimatedCost) || envelope.maxEstimatedCost < 0)
+  ) {
+    throw new TypeError("invalid_max_estimated_cost");
+  }
+
+  return {
+    allowedActionTypes: uniqueKnownValues(envelope.allowedActionTypes, ACTION_TYPES, "allowed_action_types"),
+    allowedScopes: uniqueKnownValues(envelope.allowedScopes, ACTION_SCOPES, "allowed_scopes"),
+    allowedDataSensitivities: uniqueKnownValues(
+      envelope.allowedDataSensitivities,
+      DATA_SENSITIVITIES,
+      "allowed_data_sensitivities",
+    ),
+    requireReversible: envelope.requireReversible,
+    allowSecrets: envelope.allowSecrets,
+    ...(envelope.maxAffectedRecords === undefined
+      ? {}
+      : { maxAffectedRecords: envelope.maxAffectedRecords }),
+    ...(envelope.maxEstimatedCost === undefined
+      ? {}
+      : { maxEstimatedCost: envelope.maxEstimatedCost }),
+  };
+}
+
+function copyIntentEnvelope(envelope: ArchitectureIntentEnvelope): ArchitectureIntentEnvelope {
+  return {
+    ...envelope,
+    allowedActionTypes: [...envelope.allowedActionTypes],
+    allowedScopes: [...envelope.allowedScopes],
+    allowedDataSensitivities: [...envelope.allowedDataSensitivities],
+  };
 }
 
 function canonicalize(value: unknown): unknown {
@@ -211,6 +319,31 @@ function observationFromArchitecture(architecture: ArchitecturePacket): Observat
   };
 }
 
+function proposalIntentViolations(
+  envelope: ArchitectureIntentEnvelope,
+  proposal: ActionProposalMetadata,
+): string[] {
+  const violations: string[] = [];
+  if (!envelope.allowedActionTypes.includes(proposal.type)) violations.push("action_type_outside_architecture");
+  if (!envelope.allowedScopes.includes(proposal.scope)) violations.push("scope_outside_architecture");
+  if (!envelope.allowedDataSensitivities.includes(proposal.dataSensitivity)) {
+    violations.push("data_sensitivity_outside_architecture");
+  }
+  if (envelope.requireReversible && !proposal.reversible) violations.push("irreversible_action_outside_architecture");
+  if (!envelope.allowSecrets && (proposal.containsSecrets === true || proposal.dataSensitivity === "SECRET")) {
+    violations.push("secret_handling_outside_architecture");
+  }
+  if (envelope.maxAffectedRecords !== undefined) {
+    if (proposal.affectedRecords === undefined) violations.push("unknown_blast_radius_outside_architecture");
+    else if (proposal.affectedRecords > envelope.maxAffectedRecords) violations.push("blast_radius_outside_architecture");
+  }
+  if (envelope.maxEstimatedCost !== undefined) {
+    if (proposal.estimatedCost === undefined) violations.push("unknown_cost_outside_architecture");
+    else if (proposal.estimatedCost > envelope.maxEstimatedCost) violations.push("cost_outside_architecture");
+  }
+  return violations;
+}
+
 /**
  * HT Architect: turns an already-woven Gagamba observation into a versioned
  * architecture packet. This function does not execute tools or grant authority.
@@ -223,6 +356,7 @@ export function htArchitect(input: HtArchitectureInput): ArchitecturePacket {
 
   const observation = input.weave.observation;
   for (const candidate of observation.candidates) validateCandidate(candidate);
+  const intentEnvelope = validateIntentEnvelope(input.intentEnvelope);
 
   const payload: Omit<ArchitecturePacket, "architectureBinding"> = {
     version: ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -239,6 +373,7 @@ export function htArchitect(input: HtArchitectureInput): ArchitecturePacket {
     successCriteria,
     nonGoals: boundedList(input.nonGoals ?? [], "non_goals"),
     candidates: observation.candidates.map(copyCandidate),
+    intentEnvelope,
     sourceWeaveVersion: input.weave.trace.version,
   };
 
@@ -269,7 +404,12 @@ export function mtEngineer(
   }
 
   const noAction = decision.gate === "OBSERVE_ONLY" || decision.gate === "REJECT" || !selected;
-  const requiresArchitectReview = noAction || decision.gate === "ASK_USER" || architecture.unknowns.length > 0;
+  const requiresArchitectReview = decision.gate === "ASK_USER" || architecture.unknowns.length > 0;
+  const intent: EngineeringIntent = noAction
+    ? "NO_ACTION"
+    : requiresArchitectReview
+      ? "RFI_REQUIRED"
+      : "PROPOSAL_ONLY";
 
   const payload: Omit<EngineeringPacket, "engineeringBinding"> = {
     version: ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -281,8 +421,9 @@ export function mtEngineer(
     decisionReasons: [...decision.reasons],
     selectedCandidate: selected,
     preservedConstraints: [...architecture.constraints],
+    preservedIntentEnvelope: copyIntentEnvelope(architecture.intentEnvelope),
     unresolvedUnknowns: [...architecture.unknowns],
-    intent: noAction ? "NO_ACTION" : "PROPOSAL_ONLY",
+    intent,
     requiresArchitectReview,
   };
 
@@ -294,7 +435,7 @@ export function mtEngineer(
 
 /**
  * First end-to-end architect→engineer strand. The engineering output remains
- * proposal-only regardless of Agila's internal gate vocabulary.
+ * proposal-only or explicitly returns for interpretation; neither grants authority.
  */
 export function runHtMtStrand(
   input: HtArchitectureInput,
@@ -309,7 +450,8 @@ export function runHtMtStrand(
 /**
  * Produces an explicitly UNATTESTED ActionProposal candidate for SAB policy
  * preview. The metadata is not trusted merely because an engineer supplied it.
- * A production path must independently derive/attest the concrete operation.
+ * It must first remain inside the architect's machine-checkable intent envelope.
+ * A production path must still independently derive/attest the concrete operation.
  */
 export function draftUntrustedSabProposal(
   engineering: EngineeringPacket,
@@ -319,6 +461,11 @@ export function draftUntrustedSabProposal(
   if (!verifyEngineeringPacket(engineering)) throw new Error("engineering_binding_mismatch");
   if (engineering.intent !== "PROPOSAL_ONLY" || !engineering.selectedCandidate) {
     throw new Error("engineering_packet_has_no_action_proposal");
+  }
+
+  const violations = proposalIntentViolations(engineering.preservedIntentEnvelope, metadata);
+  if (violations.length > 0) {
+    throw new Error(`proposal_outside_architecture:${violations.join(",")}`);
   }
 
   return {
