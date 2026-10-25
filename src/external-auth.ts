@@ -8,6 +8,7 @@ export const EXTERNAL_AUTH_BOUNDARY_VERSION = "2026-10-25.1" as const;
 const MAX_ID_LENGTH = 200;
 const MAX_REF_LENGTH = 4000;
 const MAX_AUTH_WINDOW_MS = 24 * 60 * 60_000;
+const AUTH_EVIDENCE_FIELDS = new Set(["version", "providerId", "sessionHandle", "verificationRef"]);
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -28,6 +29,10 @@ function parseIsoInstant(value: string, label: string): Date {
     throw new TypeError(`${label}_invalid_iso_instant`);
   }
   return parsed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export type VerifiedOperatorPrincipal = Exclude<NorthstarPrincipal, "UNVERIFIED_PUBLIC">;
@@ -119,15 +124,17 @@ export async function resolveVerifiedPrincipalContext(
   verifier: ExternalPrincipalVerifier,
   now = new Date(),
 ): Promise<VerifiedPrincipalContext> {
-  if (typeof evidence !== "object" || evidence === null) {
-    throw new TypeError("external_auth_evidence_required");
+  if (!isRecord(evidence)) throw new TypeError("external_auth_evidence_required");
+  for (const key of Object.keys(evidence)) {
+    if (!AUTH_EVIDENCE_FIELDS.has(key)) throw new Error("unexpected_auth_evidence_field");
   }
   if (evidence.version !== EXTERNAL_AUTH_BOUNDARY_VERSION) {
     throw new Error("external_auth_version_mismatch");
   }
-  const providerId = boundedText(evidence.providerId, MAX_ID_LENGTH, "auth_provider_id");
-  const sessionHandle = boundedText(evidence.sessionHandle, MAX_ID_LENGTH, "auth_session_handle");
-  boundedText(evidence.verificationRef, MAX_REF_LENGTH, "auth_verification_ref");
+
+  const providerId = boundedText(evidence.providerId as string, MAX_ID_LENGTH, "auth_provider_id");
+  const sessionHandle = boundedText(evidence.sessionHandle as string, MAX_ID_LENGTH, "auth_session_handle");
+  const verificationRef = boundedText(evidence.verificationRef as string, MAX_REF_LENGTH, "auth_verification_ref");
   if (boundedText(verifier.providerId, MAX_ID_LENGTH, "verifier_provider_id") !== providerId) {
     throw new Error("auth_provider_mismatch");
   }
@@ -135,8 +142,14 @@ export async function resolveVerifiedPrincipalContext(
   const nowMs = now.getTime();
   if (!Number.isFinite(nowMs)) throw new TypeError("invalid_now");
 
-  const result = await verifier.verify({ ...evidence, providerId, sessionHandle });
-  if (!result.verified) throw new Error(`external_auth_rejected:${boundedText(result.reason, MAX_ID_LENGTH, "auth_rejection_reason")}`);
+  const normalizedEvidence: ExternalAuthEvidence = {
+    version: EXTERNAL_AUTH_BOUNDARY_VERSION,
+    providerId,
+    sessionHandle,
+    verificationRef,
+  };
+  const result = await verifier.verify(normalizedEvidence);
+  if (!result.verified) throw new Error("external_auth_rejected");
   if (result.providerId !== providerId) throw new Error("verified_provider_mismatch");
   if (result.revoked) throw new Error("external_session_revoked");
   if (result.principal !== "VERIFIED_SAL" && result.principal !== "VERIFIED_BJORN") {
