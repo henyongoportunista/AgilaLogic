@@ -15,7 +15,7 @@ import type {
   RankedCandidate,
 } from "./types.js";
 
-export const ARCHITECT_ENGINEER_STRAND_VERSION = "2026-10-25.3" as const;
+export const ARCHITECT_ENGINEER_STRAND_VERSION = "2026-10-25.4" as const;
 
 export type GagambaArchitectId = "HT" | "PH" | "TM" | "MG" | "KP" | "MM" | "EI";
 export type AgilaEngineerId = "MT" | "MB" | "KM" | "HO" | "UO" | "UM" | "IW";
@@ -384,6 +384,10 @@ export function htArchitect(input: HtArchitectureInput): ArchitecturePacket {
  * MT Engineer: recomputes Agila's decision from the bound HT packet. It does
  * not accept a caller-supplied verdict, cannot silently rewrite architect
  * constraints, and never returns execution authority.
+ *
+ * Clarity rule: unresolved interpretation outranks passive inactivity. If the
+ * packet is ambiguous, return for interpretation instead of pretending that
+ * the absence of a selected action means the problem itself is resolved.
  */
 export function mtEngineer(
   architecture: ArchitecturePacket,
@@ -403,12 +407,15 @@ export function mtEngineer(
     }
   }
 
-  const noAction = decision.gate === "OBSERVE_ONLY" || decision.gate === "REJECT" || !selected;
-  const requiresArchitectReview = decision.gate === "ASK_USER" || architecture.unknowns.length > 0;
-  const intent: EngineeringIntent = noAction
-    ? "NO_ACTION"
-    : requiresArchitectReview
-      ? "RFI_REQUIRED"
+  const hardReject = decision.gate === "REJECT";
+  const requiresArchitectReview = !hardReject && (
+    decision.gate === "ASK_USER" || architecture.unknowns.length > 0
+  );
+  const noAction = hardReject || decision.gate === "OBSERVE_ONLY" || !selected;
+  const intent: EngineeringIntent = requiresArchitectReview
+    ? "RFI_REQUIRED"
+    : noAction
+      ? "NO_ACTION"
       : "PROPOSAL_ONLY";
 
   const payload: Omit<EngineeringPacket, "engineeringBinding"> = {
