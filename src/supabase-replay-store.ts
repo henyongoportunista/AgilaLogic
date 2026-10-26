@@ -16,12 +16,45 @@ export const SUPABASE_REPLAY_STORE_VERSION = "2026-10-25.1" as const;
 export type SupabaseReplayStoreConfig = Pick<
   SupabaseRuntimeConfig,
   "url" | "serviceRoleKey" | "fetchImpl"
->;
+> & {
+  /** Trusted server-side pin for native transport. Required when using global fetch. */
+  expectedOrigin?: string;
+};
 
-function normalizeBaseUrl(url: string): string {
-  const normalized = url.trim().replace(/\/+$/, "");
-  if (normalized.length === 0) throw new TypeError("supabase_url_empty");
-  return normalized;
+function parseHttpsOrigin(value: string, label: string): URL {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new TypeError(`${label}_empty`);
+  }
+  let parsed: URL;
+  try { parsed = new URL(value.trim()); }
+  catch { throw new TypeError(`${label}_invalid`); }
+  if (parsed.protocol !== "https:") throw new TypeError("supabase_https_required");
+  if (parsed.username || parsed.password) throw new TypeError("supabase_url_credentials_forbidden");
+  if ((parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) {
+    throw new TypeError(`${label}_must_be_origin`);
+  }
+  return parsed;
+}
+
+function normalizeBaseUrl(
+  url: string,
+  expectedOrigin: string | undefined,
+  customTransport: boolean,
+): string {
+  const parsed = parseHttpsOrigin(url, "supabase_url");
+
+  // Native fetch carries a real service-role credential, so the destination must
+  // be independently pinned by trusted server configuration. A custom fetch is
+  // itself an injected trusted transport boundary (used by tests); callers may
+  // still provide expectedOrigin and receive the same exact-origin enforcement.
+  if (expectedOrigin === undefined) {
+    if (!customTransport) throw new TypeError("supabase_expected_origin_required");
+    return parsed.origin;
+  }
+
+  const expected = parseHttpsOrigin(expectedOrigin, "supabase_expected_origin");
+  if (parsed.origin !== expected.origin) throw new Error("supabase_origin_mismatch");
+  return parsed.origin;
 }
 
 function assertServiceRoleKey(key: string): string {
@@ -80,8 +113,9 @@ function parseStoredRow(row: unknown, expectedContextId: string): StoredLifecycl
 export function createSupabaseLifecycleRegistryStore(
   config: SupabaseReplayStoreConfig,
 ): LifecycleRegistryStore {
+  const customTransport = config.fetchImpl !== undefined;
   const fetchImpl = config.fetchImpl ?? fetch;
-  const baseUrl = normalizeBaseUrl(config.url);
+  const baseUrl = normalizeBaseUrl(config.url, config.expectedOrigin, customTransport);
   const serviceRoleKey = assertServiceRoleKey(config.serviceRoleKey);
 
   async function rpc(name: string, body: Record<string, unknown>): Promise<unknown> {
