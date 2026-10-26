@@ -1,6 +1,7 @@
 import { admitForSab } from "./admission.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
+import { bindProvenanceAttestation } from "./provenance-attestation.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import {
@@ -161,12 +162,23 @@ const attestation: AdapterAttestation = {
 
 const provenanceLedger = buildProvenanceLedger(weave);
 const provenanceIntegrity = bindProvenanceLedger(provenanceLedger, boundArchitecture);
+const factEntry = provenanceLedger.entries.find((entry) => entry.signalId === "fact-1");
+assert(factEntry !== undefined, "fixture FACT provenance entry must exist");
+const sourceAttestation = bindProvenanceAttestation(factEntry, {
+  attestationId: "admission-source-attestation",
+  verifierId: "fixture-source-verifier",
+  verifiedAt: "2026-10-25T03:21:00.000Z",
+  expiresAt: "2026-10-25T03:55:00.000Z",
+  evidenceRef: "fixture://verified/sandbox-preview",
+});
+const provenanceAttestations = [sourceAttestation];
 const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
 {
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
+    provenanceAttestations,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -185,6 +197,74 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     result.candidate?.evidence.provenanceIntegrityBinding === provenanceIntegrity.binding,
     "admission evidence must retain exact provenance integrity binding",
   );
+  assert(
+    result.candidate?.evidence.provenanceAttestationIds.includes(sourceAttestation.attestationId),
+    "admission evidence must retain the accepted source receipt",
+  );
+  assert(
+    result.candidate?.evidence.sourceTruthValidUntil === engineeringLifecycle.expiresAt,
+    "source proof must cover the complete current Architecture/Engineering state window",
+  );
+}
+
+{
+  const result = admitForSab({
+    provenanceLedger,
+    provenanceIntegrity,
+    provenanceAttestations: [],
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    attestation,
+    now: admissionNow,
+  });
+  assert(!result.admitted, "a FACT with provenance metadata but no independent source receipt must not be admitted");
+  assert(
+    result.reasons.includes("architecture_fact_provenance_not_attested_for_state_window"),
+    "missing source receipt must remain explicit",
+  );
+}
+
+{
+  const shortLived = bindProvenanceAttestation(factEntry, {
+    attestationId: "short-source-attestation",
+    verifierId: "fixture-source-verifier",
+    verifiedAt: "2026-10-25T03:21:00.000Z",
+    expiresAt: "2026-10-25T03:40:00.000Z",
+  });
+  const result = admitForSab({
+    provenanceLedger,
+    provenanceIntegrity,
+    provenanceAttestations: [shortLived],
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    attestation,
+    now: admissionNow,
+  });
+  assert(!result.admitted, "source proof that expires inside the current state window must require re-verification");
+  assert(
+    result.reasons.includes("architecture_fact_provenance_not_attested_for_state_window"),
+    "short source window must fail closed",
+  );
+}
+
+{
+  const result = admitForSab({
+    provenanceLedger,
+    provenanceIntegrity,
+    provenanceAttestations: [sourceAttestation, sourceAttestation],
+    architectureState: boundArchitecture,
+    engineeringState: boundEngineering,
+    northstarContext,
+    expectation,
+    attestation,
+    now: admissionNow,
+  });
+  assert(!result.admitted, "duplicate source receipt IDs must fail closed");
+  assert(result.reasons.includes("duplicate_provenance_attestation_id"), "duplicate source receipt must be explicit");
 }
 
 {
@@ -199,6 +279,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   const result = admitForSab({
     provenanceLedger: brokenLedger,
     provenanceIntegrity,
+    provenanceAttestations,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -234,6 +315,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
+    provenanceAttestations,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext: wrongRoleContext,
@@ -250,6 +332,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
+    provenanceAttestations,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -271,6 +354,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   const result = admitForSab({
     provenanceLedger,
     provenanceIntegrity,
+    provenanceAttestations,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -283,4 +367,4 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   assert(result.reasons.includes("engineering_state_not_fresh"), "stale engineering state must be explicit");
 }
 
-console.log("trust admission v0.3 tests passed");
+console.log("trust admission source-truth tests passed");
