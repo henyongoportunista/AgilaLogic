@@ -1,5 +1,6 @@
 import {
   EXTERNAL_AUTH_BOUNDARY_VERSION,
+  createTestAuthVerifierRegistry,
   resolveVerifiedPrincipalContext,
   type ExternalPrincipalVerifier,
 } from "./external-auth.js";
@@ -7,6 +8,7 @@ import {
   NORTHSTAR_VERSION,
   assertNorthstarContextFresh,
   compileNorthstarContext,
+  getTrustedNorthstarAuthentication,
   verifyNorthstarContextPack,
   type PrincipalContext,
 } from "./northstar.js";
@@ -61,8 +63,9 @@ const salPrincipal = (
       sessionHandle: "sal-session-1",
       verificationRef: "opaque://northstar/sal-session-1",
     },
-    salVerifier,
+    createTestAuthVerifierRegistry(salVerifier),
     now,
+    "test",
   )
 ).principalContext;
 
@@ -197,4 +200,70 @@ const salPrincipal = (
   );
 }
 
-console.log("northstar integrity tests passed");
+{
+  const pack = compileNorthstarContext({
+    roleId: "MT",
+    principalContext: salPrincipal,
+    architectureVersion: ARCHITECT_ENGINEER_STRAND_VERSION,
+    requestedKnowledgeClasses: ["PUBLIC", "INTERNAL"],
+    now,
+  });
+  const authentication = getTrustedNorthstarAuthentication(pack);
+  assert(authentication?.principal === "VERIFIED_SAL", "Northstar trusted auth principal must match the verified context");
+  assert(authentication.assurance === "PHISHING_RESISTANT_MFA", "Northstar must preserve trusted authentication assurance");
+  assert(authentication.mode === "test", "Northstar must retain test-only authentication provenance");
+  assert(authentication.providerId === "northstar-test-provider", "Northstar must retain the pinned provider");
+  assert(Object.isFrozen(pack) && Object.isFrozen(pack.allowedKnowledgeClasses), "Northstar context and nested knowledge arrays must be immutable");
+  assert(!Reflect.set(pack, "principal", "VERIFIED_BJORN"), "a stamped pack cannot be relabeled as another human principal");
+  assert(!Reflect.set(pack, "sessionId", "other-session"), "a stamped pack cannot be relabeled as another session");
+  assert(!Reflect.set(pack, "authentication", { ...authentication, assurance: "SINGLE_FACTOR" }), "authentication metadata cannot be swapped on a stamped pack");
+  assert(!Reflect.set(pack.allowedKnowledgeClasses, "0", "SECRET"), "nested context arrays cannot be mutated after binding");
+  assert(verifyNorthstarContextPack(pack), "failed mutation attempts must leave the original context valid");
+  assert(getTrustedNorthstarAuthentication({ ...pack }) === undefined, "copied context cannot expose trusted assurance");
+  assert(getTrustedNorthstarAuthentication(JSON.parse(JSON.stringify(pack)) as typeof pack) === undefined, "deserialized context must require external re-verification");
+
+  const publicPack = compileNorthstarContext({
+    roleId: "HT",
+    principalContext: publicPrincipal,
+    architectureVersion: ARCHITECT_ENGINEER_STRAND_VERSION,
+    requestedKnowledgeClasses: ["PUBLIC"],
+    now,
+  });
+  assert(getTrustedNorthstarAuthentication(publicPack) === undefined, "public Northstar context cannot claim an authentication assurance level");
+  assert(!verifyNorthstarContextPack({ ...publicPack, authentication }), "public context must reject a pasted verified authentication payload");
+}
+
+{
+  const singleFactor = (
+    await resolveVerifiedPrincipalContext(
+      {
+        version: EXTERNAL_AUTH_BOUNDARY_VERSION,
+        providerId: salVerifier.providerId,
+        sessionHandle: "sal-session-1",
+        verificationRef: "opaque://northstar/sal-session-1",
+      },
+      createTestAuthVerifierRegistry({
+        providerId: salVerifier.providerId,
+        async verify(evidence) {
+          const session = await salVerifier.verify(evidence);
+          assert(session.verified, "fixture session must be verified");
+          return { ...session, assurance: "SINGLE_FACTOR" };
+        },
+      }),
+      now,
+      "test",
+    )
+  ).principalContext;
+  const input = {
+    roleId: "MT" as const,
+    architectureVersion: ARCHITECT_ENGINEER_STRAND_VERSION,
+    requestedKnowledgeClasses: ["PUBLIC" as const],
+    now,
+  };
+  const weak = compileNorthstarContext({ ...input, principalContext: singleFactor });
+  const strong = compileNorthstarContext({ ...input, principalContext: salPrincipal });
+  assert(weak.contextBinding !== strong.contextBinding, "same human/session with a different assurance level must not share the same context binding");
+  assert(getTrustedNorthstarAuthentication(weak)?.assurance === "SINGLE_FACTOR", "lower assurance must not be upgraded by compilation");
+}
+
+console.log("northstar integrity and trusted assurance tests passed");

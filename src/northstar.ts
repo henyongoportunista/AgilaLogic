@@ -1,4 +1,8 @@
-import { isExternallyVerifiedPrincipalContext } from "./external-auth.js";
+import {
+  getTrustedPrincipalAuthentication,
+  isExternallyVerifiedPrincipalContext,
+  type TrustedPrincipalAuthentication,
+} from "./external-auth.js";
 import {
   ARCHITECT_ENGINEER_PAIRS,
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -6,7 +10,7 @@ import {
   type GagambaArchitectId,
 } from "./strand.js";
 
-export const NORTHSTAR_VERSION = "2026-10-25.2" as const;
+export const NORTHSTAR_VERSION = "2026-10-25.3" as const;
 
 export type NorthstarPrincipal = "UNVERIFIED_PUBLIC" | "VERIFIED_SAL" | "VERIFIED_BJORN";
 export type PrincipalVerification = "PUBLIC_SESSION" | "EXTERNAL_AUTH";
@@ -68,6 +72,7 @@ export interface NorthstarContextPack {
   allowedKnowledgeClasses: NorthstarKnowledgeClass[];
   deniedKnowledgeClasses: NorthstarKnowledgeClass[];
   immutablePrinciples: string[];
+  authentication?: Readonly<TrustedPrincipalAuthentication>;
   contextBinding: string;
 }
 
@@ -86,7 +91,10 @@ const KNOWLEDGE_CLASSES = new Set<NorthstarKnowledgeClass>([
   "PRIVATE_OPERATOR",
   "SECRET",
 ]);
-const verifiedNorthstarContextPacks = new WeakSet<object>();
+const verifiedNorthstarContextPacks = new WeakMap<object, {
+  binding: string;
+  authentication: Readonly<TrustedPrincipalAuthentication>;
+}>();
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -225,6 +233,7 @@ export function compileNorthstarContext(input: CompileNorthstarContextInput): No
   }
 
   const principalContext = normalizePrincipalContext(input.principalContext, now);
+  const authentication = getTrustedPrincipalAuthentication(input.principalContext);
   const role = findRoleContract(input.roleId);
   const requested = normalizeRequestedKnowledgeClasses(input.requestedKnowledgeClasses);
   const principalAllowed = principalKnowledgeClasses(principalContext.principal);
@@ -256,11 +265,19 @@ export function compileNorthstarContext(input: CompileNorthstarContextInput): No
     allowedKnowledgeClasses,
     deniedKnowledgeClasses,
     immutablePrinciples: [...NORTHSTAR_IMMUTABLE_PRINCIPLES],
+    ...(authentication ? { authentication } : {}),
   };
 
   const pack: NorthstarContextPack = { ...payload, contextBinding: contextBinding(payload) };
-  if (pack.principal !== "UNVERIFIED_PUBLIC") {
-    verifiedNorthstarContextPacks.add(pack);
+  Object.freeze(pack.allowedKnowledgeClasses);
+  Object.freeze(pack.deniedKnowledgeClasses);
+  Object.freeze(pack.immutablePrinciples);
+  Object.freeze(pack);
+  if (authentication) {
+    verifiedNorthstarContextPacks.set(pack, {
+      binding: pack.contextBinding,
+      authentication,
+    });
   }
   return pack;
 }
@@ -277,13 +294,18 @@ export function verifyNorthstarContextPack(pack: NorthstarContextPack): boolean 
   if (pack.lane !== role.lane) return false;
   if (pack.pairedRoleId !== role.pairedRoleId) return false;
   if (pack.authorityCeiling !== role.authorityCeiling) return false;
+  if (typeof pack.responsibility !== "string") return false;
   if (normalize(pack.responsibility) !== normalize(role.responsibility)) return false;
 
   if (pack.principal === "UNVERIFIED_PUBLIC") {
     if (pack.principalVerification !== "PUBLIC_SESSION") return false;
+    if (pack.authentication !== undefined) return false;
   } else {
     if (pack.principalVerification !== "EXTERNAL_AUTH") return false;
-    if (!verifiedNorthstarContextPacks.has(pack)) return false;
+    const stamped = verifiedNorthstarContextPacks.get(pack);
+    if (!stamped || !Object.isFrozen(pack)) return false;
+    if (pack.contextBinding !== stamped.binding) return false;
+    if (pack.authentication !== stamped.authentication) return false;
   }
 
   if (!Array.isArray(pack.allowedKnowledgeClasses) || pack.allowedKnowledgeClasses.length === 0) return false;
@@ -317,6 +339,14 @@ export function verifyNorthstarContextPack(pack: NorthstarContextPack): boolean 
 
   const { contextBinding: claimedBinding, ...payload } = pack;
   return claimedBinding === contextBinding(payload);
+}
+
+/** Trusted immutable authentication metadata, never a caller's assurance claim. */
+export function getTrustedNorthstarAuthentication(
+  pack: NorthstarContextPack,
+): Readonly<TrustedPrincipalAuthentication> | undefined {
+  if (!verifyNorthstarContextPack(pack)) return undefined;
+  return verifiedNorthstarContextPacks.get(pack)?.authentication;
 }
 
 export function assertNorthstarContextFresh(pack: NorthstarContextPack, now = new Date()): void {

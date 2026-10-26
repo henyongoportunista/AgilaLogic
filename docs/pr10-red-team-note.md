@@ -1,5 +1,9 @@
 # PR #10 red-team note — 2026-10-25
 
+Historical checkpoint. The subsequent consent, assurance and composition pass
+is documented in [pr10-security-hardening.md](pr10-security-hardening.md).
+The commit and CI references below describe this earlier checkpoint only.
+
 Latest verified head before this note: `6d04744d134f0fbf5af3dd503998278bd739f85b`
 Latest verified CI run: `40180488895` — PASS.
 

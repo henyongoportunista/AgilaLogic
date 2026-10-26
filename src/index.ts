@@ -76,6 +76,7 @@ export {
 } from "./provenance-integrity.js";
 export type { ProvenanceIntegrityEnvelope } from "./provenance-integrity.js";
 export {
+  MAX_LIFECYCLE_ENTRIES_PER_CONTEXT,
   REPLAY_GUARD_VERSION,
   assertArchitectureStateActive,
   assertEngineeringStateActive,
@@ -91,6 +92,7 @@ export type {
 export {
   LIFECYCLE_STORE_VERSION,
   assertPersistedArchitectureStateActive,
+  assertPersistedLifecyclePairActive,
   assertPersistedEngineeringStateActive,
   assertStoredLifecycleRegistry,
   createInMemoryLifecycleRegistryStore,
@@ -119,6 +121,7 @@ export {
   NORTHSTAR_VERSION,
   assertNorthstarContextFresh,
   compileNorthstarContext,
+  getTrustedNorthstarAuthentication,
   verifyNorthstarContextPack,
 } from "./northstar.js";
 export type {
@@ -135,12 +138,17 @@ export type {
 } from "./northstar.js";
 export {
   EXTERNAL_AUTH_BOUNDARY_VERSION,
+  createProductionAuthVerifierRegistry,
+  createTestAuthVerifierRegistry,
   createPublicPrincipalContext,
+  getTrustedPrincipalAuthentication,
   isExternallyVerifiedPrincipalContext,
   resolveVerifiedPrincipalContext,
 } from "./external-auth.js";
 export type {
   AuthenticationAssurance,
+  AuthRuntimeMode,
+  AuthVerifierRegistry,
   ExternalAuthEvidence,
   ExternalPrincipalVerifier,
   ExternalSessionVerification,
@@ -148,6 +156,7 @@ export type {
   VerifiedExternalSession,
   VerifiedOperatorPrincipal,
   VerifiedPrincipalContext,
+  TrustedPrincipalAuthentication,
 } from "./external-auth.js";
 export { TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
 export type {
@@ -162,6 +171,7 @@ export {
   assertResourceStateFresh,
   assertResourceStateUnchanged,
   bindApprovalToNorthstar,
+  createConsentOperationBinding,
   createResourceStateSnapshot,
   preparePreExecution,
   recordExecutionReceipt,
@@ -171,6 +181,7 @@ export {
   verifySessionBoundApproval,
 } from "./execution.js";
 export type {
+  ConsentBindingInput,
   CreateResourceStateSnapshotInput,
   ExecutionOutcome,
   ExecutionPreconditionCheckInput,
@@ -181,6 +192,29 @@ export type {
   ResourceStateSnapshot,
   SessionBoundApproval,
 } from "./execution.js";
+export {
+  ASSURANCE_POLICY_VERSION,
+  assertAuthenticationAssurance,
+  requiredAuthenticationAssurance,
+} from "./assurance-policy.js";
+export {
+  HUMAN_CONSENT_VERSION,
+  MAX_CONSENT_CHALLENGES,
+  MAX_HUMAN_CONSENT_TTL_MS,
+  createProductionHumanConsentAuthority,
+  createTestHumanConsentAuthority,
+  getHumanConsentAuthorityMode,
+} from "./human-consent.js";
+export type {
+  HumanConsentAuthority,
+  HumanConsentChallenge,
+  HumanConsentEvidence,
+  HumanConsentReceipt,
+  HumanConsentTransaction,
+  HumanConsentVerification,
+  HumanConsentVerifier,
+  PrincipalConsentCapability,
+} from "./human-consent.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {

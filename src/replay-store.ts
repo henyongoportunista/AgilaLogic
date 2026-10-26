@@ -1,4 +1,5 @@
 import {
+  MAX_LIFECYCLE_ENTRIES_PER_CONTEXT,
   REPLAY_GUARD_VERSION,
   assertArchitectureStateActive,
   assertEngineeringStateActive,
@@ -90,6 +91,9 @@ export function assertStoredLifecycleRegistry(
     !Array.isArray(stored.registry.entries)
   ) {
     throw new Error("lifecycle_store_registry_invalid");
+  }
+  if (stored.registry.entries.length > MAX_LIFECYCLE_ENTRIES_PER_CONTEXT) {
+    throw new Error("lifecycle_registry_capacity_exceeded");
   }
 
   const byId = new Map<string, (typeof stored.registry.entries)[number]>();
@@ -208,6 +212,26 @@ export async function assertPersistedEngineeringStateActive(
   if (!stored) throw new Error("lifecycle_not_persisted");
   assertStoredLifecycleRegistry(stored, state.lifecycle.contextId);
   assertEngineeringStateActive(stored.registry, state);
+}
+
+/**
+ * Checks both lifecycles against the same loaded and validated registry version.
+ * This is not an atomic check-and-execute operation for a future external effect.
+ */
+export async function assertPersistedLifecyclePairActive(
+  store: LifecycleRegistryStore,
+  architectureState: BoundArchitectureState,
+  engineeringState: BoundEngineeringState,
+): Promise<void> {
+  const contextId = architectureState.lifecycle.contextId;
+  if (engineeringState.lifecycle.contextId !== contextId) {
+    throw new Error("packet_context_mismatch");
+  }
+  const stored = await store.load(contextId);
+  if (!stored) throw new Error("lifecycle_not_persisted");
+  assertStoredLifecycleRegistry(stored, contextId);
+  assertArchitectureStateActive(stored.registry, architectureState);
+  assertEngineeringStateActive(stored.registry, engineeringState);
 }
 
 /**

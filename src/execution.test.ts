@@ -1,8 +1,10 @@
 import {
   EXTERNAL_AUTH_BOUNDARY_VERSION,
+  createTestAuthVerifierRegistry,
   resolveVerifiedPrincipalContext,
   type ExternalPrincipalVerifier,
 } from "./external-auth.js";
+import { createTestHumanConsentAuthority, type HumanConsentVerification } from "./human-consent.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
@@ -32,6 +34,7 @@ import {
   assertResourceStateUnchanged,
   bindApprovalToNorthstar,
   createResourceStateSnapshot,
+  createConsentOperationBinding,
   preparePreExecution,
   recordExecutionReceipt,
   verifyExecutionReceipt,
@@ -174,8 +177,9 @@ const salPrincipalContext = (
       sessionHandle: "external-session-sal-1",
       verificationRef: "opaque://execution/sal-session-1",
     },
-    salVerifier,
+    createTestAuthVerifierRegistry(salVerifier),
     new Date("2026-10-25T06:25:00.000Z"),
+    "test",
   )
 ).principalContext;
 
@@ -220,13 +224,45 @@ const admissionInput = {
   attestation,
 };
 
+const initialResourceState = createResourceStateSnapshot({
+  adapterId: "staging-adapter-contract",
+  target: "staging.customer.42",
+  stateToken: "etag-customer-42-v7",
+  observedAt: "2026-10-25T06:33:00.000Z",
+  expiresAt: "2026-10-25T06:45:00.000Z",
+});
+
+
+const operationBinding = createConsentOperationBinding({ admission: admissionInput, resourceState: initialResourceState });
+// Explicit simulated independent response storage; this assigns no real human governance power.
+const consentResponses = new Map<string, HumanConsentVerification>();
+const consentAuthority = createTestHumanConsentAuthority({
+  providerId: "execution-consent-fixture",
+  async verify(evidence) {
+    const response = consentResponses.get(evidence.verificationRef);
+    if (!response) throw new Error("fixture consent response missing");
+    return response;
+  },
+}, () => true);
+const consentChallenge = consentAuthority.issueChallenge({
+  proposal: expectation.proposal, operationBinding, policyVersion: SAB_POLICY_VERSION,
+}, northstarContext, new Date("2026-10-25T06:34:00.000Z"));
+consentResponses.set("fixture://execution/consent-response-1", {
+  decision: "APPROVED", challengeId: consentChallenge.challengeId,
+  principal: "VERIFIED_SAL", sessionId: northstarContext.sessionId,
+});
+const consentReceipt = await consentAuthority.resolveConsent(consentChallenge.challengeId, {
+  providerId: "execution-consent-fixture", challengeId: consentChallenge.challengeId,
+  verificationRef: "fixture://execution/consent-response-1",
+}, northstarContext, new Date("2026-10-25T06:34:00.000Z"));
+
 const approval: ApprovalRecord = {
   proposalId: expectation.proposal.id,
   proposalBinding: proposalBinding(expectation.proposal),
   approved: true,
   approvedBy: "VERIFIED_SAL",
   issuedAt: "2026-10-25T06:34:00.000Z",
-  expiresAt: "2026-10-25T06:40:00.000Z",
+  expiresAt: "2026-10-25T06:39:00.000Z",
   policyVersion: SAB_POLICY_VERSION,
 };
 
@@ -235,15 +271,10 @@ const sessionApproval = bindApprovalToNorthstar(
   approval,
   northstarContext,
   new Date("2026-10-25T06:35:00.000Z"),
+  { authority: consentAuthority, receipt: consentReceipt, operationBinding },
+  "test",
 );
 
-const initialResourceState = createResourceStateSnapshot({
-  adapterId: "staging-adapter-contract",
-  target: "staging.customer.42",
-  stateToken: "etag-customer-42-v7",
-  observedAt: "2026-10-25T06:33:00.000Z",
-  expiresAt: "2026-10-25T06:45:00.000Z",
-});
 
 const lifecycleStore = createInMemoryLifecycleRegistryStore();
 
@@ -254,7 +285,7 @@ await rejectsWith(
     resourceState: initialResourceState,
     sessionBoundApproval: sessionApproval,
     now: new Date("2026-10-25T06:35:00.000Z"),
-  }),
+  }, "test"),
   "lifecycle_not_persisted",
   "unpersisted architecture/engineering state must never reach pre-execution",
 );
@@ -268,7 +299,7 @@ const prepared = await preparePreExecution({
   resourceState: initialResourceState,
   sessionBoundApproval: sessionApproval,
   now: new Date("2026-10-25T06:35:00.000Z"),
-});
+}, "test");
 
 assert(
   prepared.trust === "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED",
@@ -286,7 +317,7 @@ await rejectsWith(
     lifecycleStore,
     resourceState: initialResourceState,
     now: new Date("2026-10-25T06:35:00.000Z"),
-  }),
+  }, "test"),
   "human_approval_required",
   "approval-required proposal must not prepare without session-bound approval",
 );
@@ -306,7 +337,7 @@ await assertExecutionPreconditionsUnchanged({
   engineeringState: boundEngineering,
   currentResourceState: unchangedResourceState,
   now: new Date("2026-10-25T06:37:00.000Z"),
-});
+}, "test");
 
 {
   const changedResourceState = createResourceStateSnapshot({
@@ -338,7 +369,7 @@ await assertExecutionPreconditionsUnchanged({
       resourceState: initialResourceState,
       sessionBoundApproval: sessionApproval,
       now: new Date("2026-10-25T06:35:00.000Z"),
-    }),
+    }, "test"),
     "trust_admission_failed",
     "pre-execution must recompute Trust Admission and reject provenance mutation",
   );
@@ -381,8 +412,8 @@ await rejectsWith(
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     currentResourceState: unchangedResourceState,
-    now: new Date("2026-10-25T06:39:00.000Z"),
-  }),
+    now: new Date("2026-10-25T06:38:45.000Z"),
+  }, "test"),
   "lifecycle_superseded",
   "lifecycle superseded after preparation must fail the final execution precondition check",
 );

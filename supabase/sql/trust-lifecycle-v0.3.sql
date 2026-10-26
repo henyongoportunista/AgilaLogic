@@ -84,6 +84,12 @@ begin
     raise exception 'invalid_registry_entries';
   end if;
 
+  -- Keep all replay tombstones. Reject a full context instead of pruning any
+  -- replay evidence. Must match MAX_LIFECYCLE_ENTRIES_PER_CONTEXT in replay.ts.
+  if jsonb_array_length(p_registry -> 'entries') > 256 then
+    raise exception 'lifecycle_registry_capacity_exceeded';
+  end if;
+
   if exists (
     select 1
     from jsonb_array_elements(p_registry -> 'entries') as entry
@@ -91,6 +97,7 @@ begin
        or (entry ->> 'contextId') is distinct from p_context_id
        or coalesce(length(btrim(entry ->> 'lifecycleId')), 0) < 1
        or coalesce(length(btrim(entry ->> 'trustBinding')), 0) < 1
+       or (entry ->> 'kind') is null
        or (entry ->> 'kind') not in ('ARCHITECTURE', 'ENGINEERING')
   ) then
     raise exception 'invalid_registry_entry';

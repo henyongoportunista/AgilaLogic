@@ -1,11 +1,13 @@
 import { weaveSignals } from "./gagamba.js";
-import { REPLAY_GUARD_VERSION } from "./replay.js";
+import { MAX_LIFECYCLE_ENTRIES_PER_CONTEXT, REPLAY_GUARD_VERSION } from "./replay.js";
 import {
   createSupabaseLifecycleRegistryStore,
 } from "./supabase-replay-store.js";
 import {
+  LIFECYCLE_STORE_VERSION,
   assertPersistedArchitectureStateActive,
   persistArchitectureState,
+  type StoredLifecycleRegistry,
 } from "./replay-store.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import { htArchitect } from "./strand.js";
@@ -207,4 +209,108 @@ await rejectsWith(
   "external row must not smuggle another context into the active registry",
 );
 
-console.log("Supabase replay-store adapter tests passed");
+const backendError = "lifecycle_store_backend_error";
+const internalDetail = "service_role internal_lifecycle_registry database error detail fixture-only";
+
+function isolatedStore(fetchImpl: typeof fetch) {
+  return createSupabaseLifecycleRegistryStore({
+    url: "https://example.supabase.co/",
+    serviceRoleKey: "test-service-role-key-not-a-real-secret",
+    fetchImpl,
+  });
+}
+
+async function rejectsSanitized(action: () => Promise<unknown>, message: string): Promise<void> {
+  let rejected = false;
+  try { await action(); }
+  catch (error) {
+    rejected = true;
+    assert(error instanceof Error && error.message === backendError, message);
+    assert(!("cause" in error), "provider failures must not survive through Error.cause");
+    assert(!String(error.stack).includes(internalDetail), "stack must not include provider diagnostics");
+    assert(!JSON.stringify(error).includes(internalDetail), "serialized error must not expose provider diagnostics");
+  }
+  assert(rejected, message);
+}
+
+{
+  let bodyRead = false;
+  const response = new Response(internalDetail, { status: 500 });
+  response.text = async () => { bodyRead = true; return internalDetail; };
+  const failing = isolatedStore(async () => response);
+  await rejectsSanitized(() => failing.load("supabase-context"), "HTTP errors must expose a fixed code only");
+  assert(!bodyRead, "failed provider response body must not be read to construct an error");
+}
+
+{
+  const failing = isolatedStore(async () => { throw new Error(internalDetail); });
+  await rejectsSanitized(() => failing.load("supabase-context"), "transport rejection detail must be sanitized");
+}
+
+{
+  const response = new Response("{}", { status: 200 });
+  response.json = async () => { throw new Error(internalDetail); };
+  const failing = isolatedStore(async () => response);
+  await rejectsSanitized(() => failing.load("supabase-context"), "JSON parser rejection detail must be sanitized");
+}
+
+{
+  const failing = isolatedStore(async () => new Response(internalDetail, { status: 200 }));
+  await rejectsSanitized(() => failing.load("supabase-context"), "invalid JSON must expose no raw parse input");
+}
+
+for (const payload of [null, {}, true, internalDetail, [null], [internalDetail], [{}, {}]]) {
+  const malformed = isolatedStore(async () => new Response(JSON.stringify(payload), { status: 200 }));
+  await rejectsSanitized(() => malformed.load("supabase-context"), "malformed load result must fail closed");
+}
+
+const emptyNext: StoredLifecycleRegistry = {
+  version: LIFECYCLE_STORE_VERSION,
+  contextId: "supabase-context",
+  revision: 1,
+  registry: { version: REPLAY_GUARD_VERSION, entries: [] },
+};
+for (const payload of [null, {}, [], "true", 1, internalDetail]) {
+  const malformed = isolatedStore(async () => new Response(JSON.stringify(payload), { status: 200 }));
+  await rejectsSanitized(() => malformed.compareAndSwap("supabase-context", null, emptyNext),
+    "CAS must require a boolean result, never a truthy cast");
+}
+
+for (const swapped of [true, false]) {
+  const valid = isolatedStore(async () => new Response(JSON.stringify(swapped), { status: 200 }));
+  assert(await valid.compareAndSwap("supabase-context", null, emptyNext) === swapped,
+    "the adapter must preserve actual CAS success/conflict booleans");
+}
+
+{
+  const emptyResponse = isolatedStore(async () => new Response(null, { status: 204 }));
+  await rejectsSanitized(() => emptyResponse.load("supabase-context"), "load must reject a bodyless response");
+  await rejectsSanitized(() => emptyResponse.compareAndSwap("supabase-context", null, emptyNext),
+    "CAS must reject a bodyless response");
+}
+
+{
+  let calls = 0;
+  const oversizedRegistry = {
+    version: REPLAY_GUARD_VERSION,
+    entries: Array.from({ length: MAX_LIFECYCLE_ENTRIES_PER_CONTEXT + 1 }, (_, index) => ({
+      lifecycleId: `oversized-${index}`, kind: "ARCHITECTURE" as const,
+      contextId: "supabase-context", trustBinding: "fixture-binding",
+      issuedAt: "2026-10-25T08:00:00.000Z", expiresAt: "2026-10-25T09:00:00.000Z",
+    })),
+  };
+  const oversized = isolatedStore(async () => {
+    calls += 1;
+    return new Response(JSON.stringify([{
+      context_id: "supabase-context", revision: 1, registry: oversizedRegistry,
+    }]), { status: 200 });
+  });
+  await rejectsWith(() => oversized.load("supabase-context"), "lifecycle_registry_capacity_exceeded",
+    "external oversized registries must be rejected before use");
+  await rejectsWith(() => oversized.compareAndSwap("supabase-context", null, {
+    ...emptyNext, registry: oversizedRegistry,
+  }), "lifecycle_registry_capacity_exceeded", "outgoing oversized CAS must be rejected before transport");
+  assert(calls === 1, "oversized CAS must not reach the backend");
+}
+
+console.log("Supabase replay-store adapter, capacity and sanitized-error tests passed");

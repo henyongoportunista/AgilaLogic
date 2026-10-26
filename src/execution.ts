@@ -1,13 +1,13 @@
 import { admitForSab, type TrustAdmissionInput } from "./admission.js";
 import {
   assertNorthstarContextFresh,
+  getTrustedNorthstarAuthentication,
   verifyNorthstarContextPack,
   type NorthstarContextPack,
   type NorthstarPrincipal,
 } from "./northstar.js";
 import {
-  assertPersistedArchitectureStateActive,
-  assertPersistedEngineeringStateActive,
+  assertPersistedLifecyclePairActive,
   type LifecycleRegistryStore,
 } from "./replay-store.js";
 import {
@@ -20,8 +20,16 @@ import {
   type SabRoute,
 } from "./sab.js";
 import type { BoundArchitectureState, BoundEngineeringState } from "./trust.js";
+import type { AuthRuntimeMode } from "./external-auth.js";
+import { assertAuthenticationAssurance } from "./assurance-policy.js";
+import {
+  getHumanConsentAuthorityMode,
+  type HumanConsentAuthority,
+  type HumanConsentReceipt,
+  type HumanConsentTransaction,
+} from "./human-consent.js";
 
-export const PRE_EXECUTION_VERSION = "2026-10-25.2" as const;
+export const PRE_EXECUTION_VERSION = "2026-10-25.3" as const;
 export const EXECUTION_RECEIPT_VERSION = "2026-10-25.1" as const;
 
 const MAX_ID_LENGTH = 200;
@@ -148,7 +156,71 @@ export interface SessionBoundApproval {
   principal: Exclude<NorthstarPrincipal, "UNVERIFIED_PUBLIC">;
   sessionId: string;
   northstarContextBinding: string;
+  consentId: string;
+  consentBinding: string;
+  operationBinding: string;
+  runtimeMode: AuthRuntimeMode;
   binding: string;
+}
+
+export interface ConsentBindingInput {
+  authority: HumanConsentAuthority;
+  receipt: HumanConsentReceipt;
+  operationBinding: string;
+}
+
+interface BoundConsent {
+  authority: HumanConsentAuthority;
+  receipt: HumanConsentReceipt;
+  binding: string;
+  runtimeMode: AuthRuntimeMode;
+}
+const boundConsents = new WeakMap<object, Readonly<BoundConsent>>();
+const issuedPreparations = new WeakMap<object, {
+  binding: string;
+  runtimeMode: AuthRuntimeMode;
+  finalCheckConsumed: boolean;
+}>();
+
+function assertRuntimeMode(mode: AuthRuntimeMode): void {
+  if (mode !== "production" && mode !== "test") throw new Error("execution_runtime_mode_invalid");
+}
+
+/**
+ * Exact operation context requested for consent, not an attestation or signature.
+ * The same value is recomputed from admitted state immediately before preparation.
+ */
+export function createConsentOperationBinding(
+  input: Pick<PreparePreExecutionInput, "admission" | "resourceState">,
+): string {
+  if (!verifyResourceStateSnapshot(input.resourceState)) {
+    throw new Error("resource_state_binding_mismatch");
+  }
+  return canonicalString({
+    proposalBinding: proposalBinding(input.admission.expectation.proposal),
+    architectureTrustBinding: input.admission.architectureState.trustBinding,
+    engineeringTrustBinding: input.admission.engineeringState.trustBinding,
+    adapterId: input.admission.attestation.adapterId,
+    resourceStateBinding: input.resourceState.binding,
+    resourceStateToken: input.resourceState.stateToken,
+    policyVersion: SAB_POLICY_VERSION,
+  });
+}
+
+function consentTransaction(proposal: ActionProposal, operationBinding: string): HumanConsentTransaction {
+  return { proposal, operationBinding, policyVersion: SAB_POLICY_VERSION };
+}
+
+function assertApprovalAssurance(
+  proposal: ActionProposal,
+  context: NorthstarContextPack,
+  mode: AuthRuntimeMode,
+): void {
+  assertRuntimeMode(mode);
+  const authentication = getTrustedNorthstarAuthentication(context);
+  if (!authentication) throw new Error("human_approval_requires_external_auth_stamp");
+  if (authentication.mode !== mode) throw new Error("human_approval_runtime_mode_mismatch");
+  assertAuthenticationAssurance(proposal, authentication.assurance);
 }
 
 function sessionApprovalBinding(
@@ -158,15 +230,17 @@ function sessionApprovalBinding(
 }
 
 /**
- * Binds an already-created SAB approval record to a Northstar context compiled
- * from an externally resolved verified principal. Real identity trust still
- * comes from the external auth verifier, not from this binding.
+ * A SAB record and authenticated session are insufficient: require an independently
+ * issued exact-transaction receipt. This check does not consume it; preparation
+ * consumes after all policy, lifecycle, resource and session rechecks succeed.
  */
 export function bindApprovalToNorthstar(
   proposal: ActionProposal,
   approval: ApprovalRecord,
   northstarContext: NorthstarContextPack,
   now = new Date(),
+  consent?: ConsentBindingInput,
+  mode: AuthRuntimeMode = "production",
 ): SessionBoundApproval {
   if (!verifyNorthstarContextPack(northstarContext)) {
     throw new Error("northstar_context_invalid");
@@ -178,11 +252,24 @@ export function bindApprovalToNorthstar(
   if (northstarContext.principalVerification !== "EXTERNAL_AUTH") {
     throw new Error("human_approval_requires_external_auth");
   }
-  if (!isExecutionAuthorized(proposal, approval, now)) {
+  if (approval.approved !== true || approval.proposalId !== proposal.id ||
+      approval.proposalBinding !== proposalBinding(proposal) ||
+      approval.policyVersion !== SAB_POLICY_VERSION || !isExecutionAuthorized(proposal, approval, now)) {
     throw new Error("sab_approval_not_authorized");
   }
   if (approval.approvedBy !== northstarContext.principal) {
     throw new Error("approval_principal_mismatch");
+  }
+  assertApprovalAssurance(proposal, northstarContext, mode);
+  if (!consent || !consent.receipt) throw new Error("human_consent_receipt_required");
+  if (getHumanConsentAuthorityMode(consent.authority) !== mode) {
+    throw new Error("human_consent_authority_mode_mismatch");
+  }
+  if (!consent.authority.verifyReceipt(
+    consent.receipt, consentTransaction(proposal, consent.operationBinding), northstarContext, now,
+  )) throw new Error("human_consent_receipt_invalid");
+  if (approval.issuedAt !== consent.receipt.issuedAt || approval.expiresAt !== consent.receipt.expiresAt) {
+    throw new Error("approval_consent_window_mismatch");
   }
 
   const payload: Omit<SessionBoundApproval, "binding"> = {
@@ -191,8 +278,17 @@ export function bindApprovalToNorthstar(
     principal: northstarContext.principal,
     sessionId: northstarContext.sessionId,
     northstarContextBinding: northstarContext.contextBinding,
+    consentId: consent.receipt.consentId,
+    consentBinding: consent.receipt.binding,
+    operationBinding: consent.operationBinding,
+    runtimeMode: mode,
   };
-  return { ...payload, binding: sessionApprovalBinding(payload) };
+  Object.freeze(payload.approval);
+  const result = Object.freeze({ ...payload, binding: sessionApprovalBinding(payload) });
+  boundConsents.set(result, Object.freeze({
+    authority: consent.authority, receipt: consent.receipt, binding: result.binding, runtimeMode: mode,
+  }));
+  return result;
 }
 
 export function verifySessionBoundApproval(
@@ -200,24 +296,38 @@ export function verifySessionBoundApproval(
   approval: SessionBoundApproval,
   northstarContext: NorthstarContextPack,
   now = new Date(),
+  operationBinding?: string,
+  mode: AuthRuntimeMode = "production",
 ): boolean {
-  if (typeof approval !== "object" || approval === null) return false;
-  if (approval.version !== PRE_EXECUTION_VERSION) return false;
-  const { binding, ...payload } = approval;
-  if (binding !== sessionApprovalBinding(payload)) return false;
-  if (!verifyNorthstarContextPack(northstarContext)) return false;
   try {
-    assertNorthstarContextFresh(northstarContext, now);
-  } catch {
-    return false;
-  }
-  if (northstarContext.principal === "UNVERIFIED_PUBLIC") return false;
-  if (northstarContext.principalVerification !== "EXTERNAL_AUTH") return false;
-  if (approval.principal !== northstarContext.principal) return false;
-  if (approval.sessionId !== northstarContext.sessionId) return false;
-  if (approval.northstarContextBinding !== northstarContext.contextBinding) return false;
-  if (approval.approval.approvedBy !== northstarContext.principal) return false;
-  return isExecutionAuthorized(proposal, approval.approval, now);
+    if (typeof approval !== "object" || approval === null) return false;
+    const consent = boundConsents.get(approval);
+    if (!consent || consent.binding !== approval.binding || consent.runtimeMode !== mode) return false;
+    if (approval.version !== PRE_EXECUTION_VERSION) return false;
+    const { binding, ...payload } = approval;
+    if (binding !== sessionApprovalBinding(payload)) return false;
+    if (!verifyNorthstarContextPack(northstarContext)) return false;
+    try {
+      assertNorthstarContextFresh(northstarContext, now);
+    } catch {
+      return false;
+    }
+    if (northstarContext.principal === "UNVERIFIED_PUBLIC") return false;
+    if (northstarContext.principalVerification !== "EXTERNAL_AUTH") return false;
+    if (approval.principal !== northstarContext.principal) return false;
+    if (approval.sessionId !== northstarContext.sessionId) return false;
+    if (approval.northstarContextBinding !== northstarContext.contextBinding) return false;
+    if (approval.approval.approvedBy !== northstarContext.principal) return false;
+    if (approval.runtimeMode !== mode || approval.consentId !== consent.receipt.consentId) return false;
+    if (approval.consentBinding !== consent.receipt.binding) return false;
+    if (operationBinding !== undefined && approval.operationBinding !== operationBinding) return false;
+    assertApprovalAssurance(proposal, northstarContext, mode);
+    if (getHumanConsentAuthorityMode(consent.authority) !== mode) return false;
+    if (!consent.authority.verifyReceipt(
+      consent.receipt, consentTransaction(proposal, operationBinding ?? approval.operationBinding), northstarContext, now,
+    )) return false;
+    return isExecutionAuthorized(proposal, approval.approval, now);
+  } catch { return false; }
 }
 
 export interface PreExecutionRequest {
@@ -237,6 +347,9 @@ export interface PreExecutionRequest {
   expectedResourceStateToken: string;
   preparedAt: string;
   expiresAt: string;
+  runtimeMode: AuthRuntimeMode;
+  consentId?: string;
+  consentBinding?: string;
   binding: string;
 }
 
@@ -254,6 +367,34 @@ export interface PreparePreExecutionInput {
   now?: Date;
 }
 
+function snapshotClock(now: Date | undefined): Date | undefined {
+  if (now === undefined) return undefined;
+  let value: number;
+  try { value = Date.prototype.getTime.call(now); }
+  catch { throw new TypeError("invalid_now"); }
+  if (!Number.isFinite(value)) throw new TypeError("invalid_now");
+  return new Date(value);
+}
+
+/** Keep the stamped immutable identity; isolate all caller-owned transaction data. */
+function snapshotPreparationInput(input: PreparePreExecutionInput): PreparePreExecutionInput {
+  const { admission, lifecycleStore, resourceState, sessionBoundApproval, now } = input;
+  const { northstarContext, now: _admissionClock, ...transaction } = admission;
+  return {
+    admission: {
+      ...structuredClone(transaction),
+      northstarContext: northstarContext.principal === "UNVERIFIED_PUBLIC"
+        ? structuredClone(northstarContext)
+        : northstarContext,
+    },
+    lifecycleStore,
+    resourceState: structuredClone(resourceState),
+    // Genuine bound approvals are frozen and privately stamped; cloning loses authority.
+    sessionBoundApproval,
+    now: snapshotClock(now),
+  };
+}
+
 /**
  * Recomputes Trust Admission and requires both Architecture and Engineering
  * lifecycle states to be persisted and currently active. It then binds the
@@ -264,18 +405,23 @@ export interface PreparePreExecutionInput {
  */
 export async function preparePreExecution(
   input: PreparePreExecutionInput,
+  mode: AuthRuntimeMode = "production",
 ): Promise<PreExecutionRequest> {
-  const now = input.now ?? new Date();
-  if (!Number.isFinite(now.getTime())) throw new TypeError("invalid_now");
+  assertRuntimeMode(mode);
+  input = snapshotPreparationInput(input);
+  const initialNow = input.now ?? new Date();
+  if (!Number.isFinite(initialNow.getTime())) throw new TypeError("invalid_now");
 
-  await assertPersistedArchitectureStateActive(
+  await assertPersistedLifecyclePairActive(
     input.lifecycleStore,
     input.admission.architectureState,
-  );
-  await assertPersistedEngineeringStateActive(
-    input.lifecycleStore,
     input.admission.engineeringState,
   );
+
+  // External store latency must not preserve a stale default-clock authority
+  // window. An explicitly supplied fixture clock remains deterministic.
+  const now = input.now ?? new Date();
+  if (!Number.isFinite(now.getTime())) throw new TypeError("invalid_now");
 
   const admission = admitForSab({ ...input.admission, now });
   if (!admission.admitted || !admission.candidate) {
@@ -305,11 +451,15 @@ export async function preparePreExecution(
   const decision = evaluateProposal(proposal);
   if (decision.route === "DENY") throw new Error("sab_denied");
 
+  const operationBinding = createConsentOperationBinding(input);
+  let consent: Readonly<BoundConsent> | undefined;
   if (decision.route === "REQUIRE_HUMAN_APPROVAL") {
     if (!input.sessionBoundApproval) throw new Error("human_approval_required");
-    if (!verifySessionBoundApproval(proposal, input.sessionBoundApproval, northstar, now)) {
+    assertApprovalAssurance(proposal, northstar, mode);
+    if (!verifySessionBoundApproval(proposal, input.sessionBoundApproval, northstar, now, operationBinding, mode)) {
       throw new Error("session_bound_approval_invalid");
     }
+    consent = boundConsents.get(input.sessionBoundApproval);
   }
 
   const expiryCandidates = [
@@ -344,33 +494,55 @@ export async function preparePreExecution(
     expectedResourceStateToken: input.resourceState.stateToken,
     preparedAt: now.toISOString(),
     expiresAt: new Date(expiresAtMs).toISOString(),
+    runtimeMode: mode,
+    ...(consent ? { consentId: consent.receipt.consentId, consentBinding: consent.receipt.binding } : {}),
   };
 
-  return { ...payload, binding: preExecutionBinding(payload) };
+  // No await follows consumption: concurrent prepares can consume this receipt
+  // only once in this process. No side effect is performed by this boundary.
+  if (consent) consent.authority.consumeReceipt(
+    consent.receipt, consentTransaction(proposal, operationBinding), northstar, now,
+  );
+  Object.freeze(payload.proposal);
+  const prepared = Object.freeze({ ...payload, binding: preExecutionBinding(payload) });
+  issuedPreparations.set(prepared, { binding: prepared.binding, runtimeMode: mode, finalCheckConsumed: false });
+  return prepared;
 }
 
 export function verifyPreExecutionRequest(request: PreExecutionRequest): boolean {
-  if (typeof request !== "object" || request === null) return false;
-  if (request.version !== PRE_EXECUTION_VERSION) return false;
-  if (request.trust !== "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED") return false;
-  if (request.policyVersion !== SAB_POLICY_VERSION) return false;
-  if ((request.sabRoute as SabRoute) === "DENY") return false;
-  if (request.proposalBinding !== proposalBinding(request.proposal)) return false;
   try {
-    const preparedAt = parseIsoInstant(request.preparedAt, "pre_execution_prepared_at");
-    const expiresAt = parseIsoInstant(request.expiresAt, "pre_execution_expires_at");
-    if (expiresAt.getTime() <= preparedAt.getTime()) return false;
-    boundedText(request.architectureTrustBinding, MAX_REF_LENGTH, "pre_execution_architecture_binding");
-    boundedText(request.engineeringTrustBinding, MAX_REF_LENGTH, "pre_execution_engineering_binding");
-    boundedText(request.adapterId, MAX_ID_LENGTH, "pre_execution_adapter_id");
-    boundedText(request.expectedResourceStateBinding, MAX_REF_LENGTH, "pre_execution_resource_binding");
-    boundedText(request.expectedResourceStateToken, MAX_TOKEN_LENGTH, "pre_execution_state_token");
-    boundedText(request.sessionId, MAX_ID_LENGTH, "pre_execution_session_id");
-  } catch {
-    return false;
-  }
-  const { binding, ...payload } = request;
-  return binding === preExecutionBinding(payload);
+    if (typeof request !== "object" || request === null) return false;
+    if (request.version !== PRE_EXECUTION_VERSION) return false;
+    if (request.trust !== "PRE_EXECUTION_STRUCTURALLY_READY_UNAUTHENTICATED") return false;
+    if (request.policyVersion !== SAB_POLICY_VERSION) return false;
+    if ((request.sabRoute as SabRoute) === "DENY") return false;
+    assertRuntimeMode(request.runtimeMode);
+    const decision = evaluateProposal(request.proposal);
+    if (decision.route !== request.sabRoute) return false;
+    // Every route must originate from recomputed Trust Admission. A caller
+    // cannot lower a declared SAB route and forge a new public JSON binding.
+    const issued = issuedPreparations.get(request);
+    if (!issued || issued.binding !== request.binding || issued.runtimeMode !== request.runtimeMode) return false;
+    if (decision.route === "REQUIRE_HUMAN_APPROVAL") {
+      if (!request.consentId || !request.consentBinding) return false;
+    }
+    if (request.proposalBinding !== proposalBinding(request.proposal)) return false;
+    try {
+      const preparedAt = parseIsoInstant(request.preparedAt, "pre_execution_prepared_at");
+      const expiresAt = parseIsoInstant(request.expiresAt, "pre_execution_expires_at");
+      if (expiresAt.getTime() <= preparedAt.getTime()) return false;
+      boundedText(request.architectureTrustBinding, MAX_REF_LENGTH, "pre_execution_architecture_binding");
+      boundedText(request.engineeringTrustBinding, MAX_REF_LENGTH, "pre_execution_engineering_binding");
+      boundedText(request.adapterId, MAX_ID_LENGTH, "pre_execution_adapter_id");
+      boundedText(request.expectedResourceStateBinding, MAX_REF_LENGTH, "pre_execution_resource_binding");
+      boundedText(request.expectedResourceStateToken, MAX_TOKEN_LENGTH, "pre_execution_state_token");
+      boundedText(request.sessionId, MAX_ID_LENGTH, "pre_execution_session_id");
+    } catch {
+      return false;
+    }
+    const { binding, ...payload } = request;
+    return binding === preExecutionBinding(payload);
+  } catch { return false; }
 }
 
 /**
@@ -412,8 +584,18 @@ export interface ExecutionPreconditionCheckInput {
  */
 export async function assertExecutionPreconditionsUnchanged(
   input: ExecutionPreconditionCheckInput,
+  mode: AuthRuntimeMode = "production",
 ): Promise<void> {
-  const now = input.now ?? new Date();
+  // Preserve the exact issued request and copy caller-owned data before the first
+  // await. Replacing fields or mutating nested aliases cannot change the check.
+  input = {
+    request: input.request,
+    lifecycleStore: input.lifecycleStore,
+    architectureState: structuredClone(input.architectureState),
+    engineeringState: structuredClone(input.engineeringState),
+    currentResourceState: structuredClone(input.currentResourceState),
+    now: snapshotClock(input.now),
+  };
   if (!verifyPreExecutionRequest(input.request)) {
     throw new Error("pre_execution_binding_mismatch");
   }
@@ -424,9 +606,15 @@ export async function assertExecutionPreconditionsUnchanged(
     throw new Error("pre_execution_engineering_state_mismatch");
   }
 
-  await assertPersistedArchitectureStateActive(input.lifecycleStore, input.architectureState);
-  await assertPersistedEngineeringStateActive(input.lifecycleStore, input.engineeringState);
+  await assertPersistedLifecyclePairActive(input.lifecycleStore, input.architectureState, input.engineeringState);
+  const now = input.now ?? new Date();
   assertResourceStateUnchanged(input.request, input.currentResourceState, now);
+  assertRuntimeMode(mode);
+  if (input.request.runtimeMode !== mode) throw new Error("pre_execution_runtime_mode_mismatch");
+  const issued = issuedPreparations.get(input.request);
+  if (!issued || issued.binding !== input.request.binding) throw new Error("pre_execution_origin_unverified");
+  if (issued.finalCheckConsumed) throw new Error("pre_execution_already_consumed");
+  issued.finalCheckConsumed = true;
 }
 
 export type ExecutionOutcome = "SUCCEEDED" | "FAILED" | "UNKNOWN";

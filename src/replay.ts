@@ -2,6 +2,10 @@ import type { BoundArchitectureState, BoundEngineeringState } from "./trust.js";
 
 export const REPLAY_GUARD_VERSION = "2026-10-25.1" as const;
 
+// Retain replay tombstones rather than evicting history. A full context must
+// stop accepting lifecycles; safe compaction needs a separately reviewed design.
+export const MAX_LIFECYCLE_ENTRIES_PER_CONTEXT = 256;
+
 export type LifecycleKind = "ARCHITECTURE" | "ENGINEERING";
 
 export interface LifecycleRegistryEntry {
@@ -27,6 +31,9 @@ function assertRegistry(registry: LifecycleRegistry): void {
   if (registry.version !== REPLAY_GUARD_VERSION || !Array.isArray(registry.entries)) {
     throw new Error("invalid_lifecycle_registry");
   }
+  if (registry.entries.length > MAX_LIFECYCLE_ENTRIES_PER_CONTEXT) {
+    throw new Error("lifecycle_registry_capacity_exceeded");
+  }
 }
 
 function register(
@@ -37,6 +44,9 @@ function register(
   assertRegistry(registry);
   if (registry.entries.some((item) => item.lifecycleId === entry.lifecycleId)) {
     throw new Error("lifecycle_replay_detected");
+  }
+  if (registry.entries.length >= MAX_LIFECYCLE_ENTRIES_PER_CONTEXT) {
+    throw new Error("lifecycle_registry_capacity_exceeded");
   }
 
   const next = registry.entries.map((item) => ({ ...item }));

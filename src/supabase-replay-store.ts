@@ -4,7 +4,11 @@ import {
   type LifecycleRegistryStore,
   type StoredLifecycleRegistry,
 } from "./replay-store.js";
-import { REPLAY_GUARD_VERSION, type LifecycleRegistry } from "./replay.js";
+import {
+  MAX_LIFECYCLE_ENTRIES_PER_CONTEXT,
+  REPLAY_GUARD_VERSION,
+  type LifecycleRegistry,
+} from "./replay.js";
 import type { SupabaseRuntimeConfig } from "./supabase.js";
 
 export const SUPABASE_REPLAY_STORE_VERSION = "2026-10-25.1" as const;
@@ -13,12 +17,6 @@ export type SupabaseReplayStoreConfig = Pick<
   SupabaseRuntimeConfig,
   "url" | "serviceRoleKey" | "fetchImpl"
 >;
-
-interface LifecycleRegistryRow {
-  context_id: string;
-  revision: number;
-  registry: unknown;
-}
 
 function normalizeBaseUrl(url: string): string {
   const normalized = url.trim().replace(/\/+$/, "");
@@ -42,21 +40,28 @@ function parseRegistry(value: unknown): LifecycleRegistry {
   if (record.version !== REPLAY_GUARD_VERSION || !Array.isArray(record.entries)) {
     throw new Error("lifecycle_store_registry_invalid");
   }
+  if (record.entries.length > MAX_LIFECYCLE_ENTRIES_PER_CONTEXT) {
+    throw new Error("lifecycle_registry_capacity_exceeded");
+  }
 
   return value as LifecycleRegistry;
 }
 
-function parseStoredRow(row: LifecycleRegistryRow, expectedContextId: string): StoredLifecycleRegistry {
-  if (row.context_id !== expectedContextId) throw new Error("lifecycle_store_context_mismatch");
-  if (!Number.isInteger(row.revision) || row.revision < 1) {
+function parseStoredRow(row: unknown, expectedContextId: string): StoredLifecycleRegistry {
+  if (typeof row !== "object" || row === null || Array.isArray(row)) {
+    throw new Error("lifecycle_store_backend_error");
+  }
+  const record = row as Record<string, unknown>;
+  if (record.context_id !== expectedContextId) throw new Error("lifecycle_store_context_mismatch");
+  if (typeof record.revision !== "number" || !Number.isInteger(record.revision) || record.revision < 1) {
     throw new Error("lifecycle_store_revision_invalid");
   }
 
   const stored: StoredLifecycleRegistry = {
     version: LIFECYCLE_STORE_VERSION,
-    contextId: row.context_id,
-    revision: row.revision,
-    registry: parseRegistry(row.registry),
+    contextId: expectedContextId,
+    revision: record.revision,
+    registry: parseRegistry(record.registry),
   };
   assertStoredLifecycleRegistry(stored, expectedContextId);
   return stored;
@@ -79,36 +84,40 @@ export function createSupabaseLifecycleRegistryStore(
   const baseUrl = normalizeBaseUrl(config.url);
   const serviceRoleKey = assertServiceRoleKey(config.serviceRoleKey);
 
-  async function rpc<T>(name: string, body: Record<string, unknown>): Promise<T> {
-    const response = await fetchImpl(`${baseUrl}/rest/v1/rpc/${name}`, {
-      method: "POST",
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+  async function rpc(name: string, body: Record<string, unknown>): Promise<unknown> {
+    try {
+      const response = await fetchImpl(`${baseUrl}/rest/v1/rpc/${name}`, {
+        method: "POST",
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Supabase lifecycle RPC failed (${response.status}): ${text}`);
+      if (!response.ok) throw new Error("lifecycle_store_backend_error");
+      if (response.status === 204) return undefined;
+      return await response.json();
+    } catch {
+      // Provider, transport and parser diagnostics may contain secrets. Do not
+      // read failed response bodies or retain the original error as a cause.
+      throw new Error("lifecycle_store_backend_error");
     }
-
-    if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
   }
 
   return {
     storageClass: "EXTERNAL_STORE",
 
     async load(contextId: string): Promise<StoredLifecycleRegistry | null> {
-      const rows = await rpc<LifecycleRegistryRow[]>("henyong_lifecycle_registry_load", {
+      const rows = await rpc("henyong_lifecycle_registry_load", {
         p_context_id: contextId,
       });
-      const row = rows[0];
-      return row ? parseStoredRow(row, contextId) : null;
+      if (!Array.isArray(rows) || rows.length > 1) {
+        throw new Error("lifecycle_store_backend_error");
+      }
+      return rows.length === 0 ? null : parseStoredRow(rows[0], contextId);
     },
 
     async compareAndSwap(
@@ -125,12 +134,14 @@ export function createSupabaseLifecycleRegistryStore(
       }
       assertStoredLifecycleRegistry(next, contextId);
 
-      return rpc<boolean>("henyong_lifecycle_registry_cas", {
+      const swapped = await rpc("henyong_lifecycle_registry_cas", {
         p_context_id: contextId,
         p_expected_revision: expectedRevision,
         p_next_revision: next.revision,
         p_registry: next.registry,
       });
+      if (typeof swapped !== "boolean") throw new Error("lifecycle_store_backend_error");
+      return swapped;
     },
   };
 }
