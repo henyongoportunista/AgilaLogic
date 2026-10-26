@@ -39,7 +39,7 @@ A source receipt must remain valid through the current Architecture/Engineering 
 
 This avoids treating a claim as good for a decision state that outlives its own source-verification window. A shorter source receipt requires re-verification before the state can be admitted.
 
-If the Architecture contains no FACT claims, no source receipt is required for that reason alone.
+If the Architecture contains no FACT claims, no source receipt is required for that reason alone. Regression coverage keeps that no-FACT path explicit so future tightening cannot accidentally invent evidence that does not exist.
 
 ## Fail-closed cases
 
