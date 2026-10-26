@@ -76,6 +76,17 @@ export {
 } from "./provenance-integrity.js";
 export type { ProvenanceIntegrityEnvelope } from "./provenance-integrity.js";
 export {
+  PROVENANCE_ATTESTATION_VERSION,
+  assertProvenanceAttestationFresh,
+  bindProvenanceAttestation,
+  provenanceAttestationMatchesEntry,
+  verifyProvenanceAttestation,
+} from "./provenance-attestation.js";
+export type {
+  BindProvenanceAttestationInput,
+  ProvenanceAttestation,
+} from "./provenance-attestation.js";
+export {
   MAX_LIFECYCLE_ENTRIES_PER_CONTEXT,
   REPLAY_GUARD_VERSION,
   assertArchitectureStateActive,
@@ -158,7 +169,7 @@ export type {
   VerifiedPrincipalContext,
   TrustedPrincipalAuthentication,
 } from "./external-auth.js";
-export { TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
+export { MAX_PROVENANCE_ATTESTATIONS, TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
 export type {
   SabAdmissibleCandidate,
   TrustAdmissionInput,
