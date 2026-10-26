@@ -240,6 +240,14 @@ function configuredAuthority(
     if (!permitted) throw new Error("human_consent_capability_required");
   }
 
+  function reclaimExpiredChallenges(now: Date): void {
+    const nowMs = instant(now);
+    for (const [challengeId, state] of states) {
+      const expiresAt = new Date(state.challenge.expiresAt).getTime();
+      if (Number.isFinite(expiresAt) && nowMs >= expiresAt) states.delete(challengeId);
+    }
+  }
+
   function validReceipt(
     receipt: HumanConsentReceipt,
     transaction: HumanConsentTransaction,
@@ -272,6 +280,9 @@ function configuredAuthority(
       const auth = trustedAuthentication(northstar, mode, now);
       assertAuthenticationAssurance(expected.proposal, auth.assurance);
       requireCapability(auth.principal, expected.proposal);
+      // Preserve all active replay tombstones, but reclaim challenges only after
+      // their authority window has expired so capacity cannot become a lifetime DoS.
+      reclaimExpiredChallenges(now);
       if (states.size >= MAX_CONSENT_CHALLENGES) throw new Error("human_consent_registry_capacity_exceeded");
       const expiresAt = Math.min(instant(now) + MAX_HUMAN_CONSENT_TTL_MS, new Date(auth.expiresAt).getTime());
       const payload: Omit<HumanConsentChallenge, "binding"> = {
