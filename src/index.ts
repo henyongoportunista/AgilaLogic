@@ -191,6 +191,21 @@ export type {
   ExecutionVerification,
   ExecutionVerificationStatus,
 } from "./execution-verification.js";
+export {
+  EXECUTION_LEDGER_VERSION,
+  attachExecutionVerification,
+  completeExecution,
+  emptyExecutionLedger,
+  reserveExecution,
+  startExecution,
+  verifyExecutionLedger,
+} from "./execution-ledger.js";
+export type {
+  ExecutionLedger,
+  ExecutionLedgerEntry,
+  ExecutionLedgerStatus,
+  ExecutionLedgerVerificationRef,
+} from "./execution-ledger.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {
