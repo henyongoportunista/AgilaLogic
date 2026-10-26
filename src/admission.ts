@@ -297,9 +297,13 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     return { admitted: false, reasons };
   }
 
-  const sourceTruthValidUntilMs = Math.min(
-    ...acceptedProvenanceAttestations.map((entry) => new Date(entry.expiresAt).getTime()),
+  const stateTruthValidUntilMs = Math.min(
+    new Date(input.architectureState.lifecycle.expiresAt).getTime(),
+    new Date(input.engineeringState.lifecycle.expiresAt).getTime(),
   );
+  const sourceTruthValidUntilMs = acceptedProvenanceAttestations.length === 0
+    ? stateTruthValidUntilMs
+    : Math.min(...acceptedProvenanceAttestations.map((entry) => new Date(entry.expiresAt).getTime()));
 
   return {
     admitted: true,
