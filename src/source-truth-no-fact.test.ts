@@ -23,12 +23,12 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const weave = weaveSignals({
   signals: [{
-    id: "inference-only",
-    kind: "INFERENCE",
-    text: "The sandbox resource may be available.",
+    id: "constraint-only",
+    kind: "CONSTRAINT",
+    text: "Use sandbox scope only.",
     provenance: {
-      sourceClass: "MODEL_DERIVED",
-      producer: "fixture-model",
+      sourceClass: "HUMAN_STATED",
+      producer: "fixture-operator",
       observedAt: "2026-10-25T11:00:00.000Z",
     },
   }],
@@ -48,7 +48,7 @@ const architecture = htArchitect({
   packetId: "no-fact-architecture",
   objective: "Prepare a bounded sandbox read without inventing a fact.",
   weave,
-  successCriteria: ["No inference is promoted into a FACT."],
+  successCriteria: ["No non-factual constraint is promoted into a FACT."],
   nonGoals: ["No external execution."],
   intentEnvelope: {
     allowedActionTypes: ["READ"],
@@ -61,6 +61,7 @@ const architecture = htArchitect({
   },
 });
 assert(architecture.facts.length === 0, "fixture must contain no Architecture FACTs");
+assert(architecture.constraints.includes("Use sandbox scope only."), "fixture must retain the explicit non-factual constraint");
 
 const architectureState = bindArchitectureLifecycle(architecture, {
   lifecycleId: "no-fact-architecture-life",
@@ -75,7 +76,7 @@ const { engineering } = mtEngineer(
   { autonomyLevel: 2, riskTolerance: 0.3, confidenceThreshold: 0.7 },
   "no-fact-engineering",
 );
-assert(engineering.intent === "PROPOSAL_ONLY", "fixture must produce a proposal");
+assert(engineering.intent === "PROPOSAL_ONLY", "clear no-FACT constraint fixture must still produce a proposal");
 
 const engineeringState = bindEngineeringLifecycle(engineering, {
   lifecycleId: "no-fact-engineering-life",
