@@ -1,6 +1,7 @@
 import { admitForSab } from "./admission.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
+import { bindProvenanceLedger } from "./provenance-integrity.js";
 import { SAB_POLICY_VERSION } from "./sab.js";
 import {
   ARCHITECT_ENGINEER_STRAND_VERSION,
@@ -159,11 +160,13 @@ const attestation: AdapterAttestation = {
 };
 
 const provenanceLedger = buildProvenanceLedger(weave);
+const provenanceIntegrity = bindProvenanceLedger(provenanceLedger, boundArchitecture);
 const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceIntegrity,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -178,6 +181,10 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     "admission must not claim authenticated provenance, adapter identity, or execution authority",
   );
   assert(result.candidate?.proposal.target === "sandbox.preview", "admitted proposal must preserve target");
+  assert(
+    result.candidate?.evidence.provenanceIntegrityBinding === provenanceIntegrity.binding,
+    "admission evidence must retain exact provenance integrity binding",
+  );
 }
 
 {
@@ -191,6 +198,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger: brokenLedger,
+    provenanceIntegrity,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -199,10 +207,11 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
     now: admissionNow,
   });
 
-  assert(!result.admitted, "fact provenance gap must block structural admission");
+  assert(!result.admitted, "fact provenance mutation must block structural admission");
+  assert(result.reasons.includes("provenance_integrity_invalid"), "ledger mutation must break provenance integrity binding");
   assert(
     result.reasons.includes("architecture_fact_unresolved_provenance"),
-    "missing fact provenance must be explicit",
+    "missing fact provenance must remain explicit",
   );
   assert(result.candidate === undefined, "failed provenance must emit no candidate");
 }
@@ -224,6 +233,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 
   const result = admitForSab({
     provenanceLedger,
+    provenanceIntegrity,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext: wrongRoleContext,
@@ -239,6 +249,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceIntegrity,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -259,6 +270,7 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
 {
   const result = admitForSab({
     provenanceLedger,
+    provenanceIntegrity,
     architectureState: boundArchitecture,
     engineeringState: boundEngineering,
     northstarContext,
@@ -271,4 +283,4 @@ const admissionNow = new Date("2026-10-25T03:34:00.000Z");
   assert(result.reasons.includes("engineering_state_not_fresh"), "stale engineering state must be explicit");
 }
 
-console.log("trust admission v0.2 tests passed");
+console.log("trust admission v0.3 tests passed");

@@ -21,6 +21,8 @@ const publicRead: ActionProposal = {
   reversible: true,
   dataSensitivity: "PUBLIC",
   affectedRecords: 250,
+  estimatedCost: 0,
+  containsSecrets: false,
 };
 
 {
@@ -50,6 +52,36 @@ const sensitiveRead: ActionProposal = {
   target: "hr.payroll",
   dataSensitivity: "SENSITIVE",
 };
+
+for (const read of [publicRead, internalRead]) {
+  const { estimatedCost: _cost, ...unknownCostRead } = read;
+  const unknownCost = evaluateProposal(unknownCostRead);
+  assert(unknownCost.route === "REQUIRE_HUMAN_APPROVAL", "unknown READ cost must not become zero");
+  assert(unknownCost.reasons.includes("unknown_financial_cost"), "unknown READ cost requires a fixed reason");
+  assert(!isExecutionAuthorized(unknownCostRead, undefined, now), "unknown READ cost must stop at authority gate");
+
+  const paidRead = { ...read, estimatedCost: 0.01 };
+  const paid = evaluateProposal(paidRead);
+  assert(paid.route === "REQUIRE_HUMAN_APPROVAL", "paid READ must not inherit a read-only allow route");
+  assert(paid.reasons.includes("financial_consequence"), "paid READ consequence must be explicit");
+  assert(!isExecutionAuthorized(paidRead, undefined, now), "paid READ must stop at authority gate");
+
+  const { containsSecrets: _secrets, ...unknownSecretsRead } = read;
+  const unknownSecrets = evaluateProposal(unknownSecretsRead);
+  assert(unknownSecrets.route === "REQUIRE_HUMAN_APPROVAL", "unknown READ secret status must not become false");
+  assert(unknownSecrets.reasons.includes("unknown_secret_status"), "unknown READ secret status requires a fixed reason");
+  assert(!isExecutionAuthorized(unknownSecretsRead, undefined, now), "unknown READ secret status must stop at authority gate");
+}
+
+{
+  const externalSecretRead = {
+    ...publicRead, scope: "EXTERNAL", dataSensitivity: "SECRET",
+    estimatedCost: undefined, containsSecrets: undefined,
+  };
+  const result = evaluateProposal(externalSecretRead);
+  assert(result.route === "DENY", "external SECRET READ must remain hard-denied before READ allows");
+  assert(result.reasons.includes("secret_exfiltration_blocked"), "external secret deny must remain first");
+}
 
 {
   const result = evaluateProposal(sensitiveRead);
@@ -177,6 +209,12 @@ const destructiveProposal: ActionProposal = {
     "exact short-lived approval should authorize the proposal",
   );
 
+  for (const forgedFlag of ["true", 1, {}, []]) {
+    const forgedApproval = { ...approval, approved: forgedFlag } as unknown as ApprovalRecord;
+    assert(!isExecutionAuthorized(destructiveProposal, forgedApproval, now),
+      "truthy non-boolean approval flags must not authorize");
+  }
+
   const blastRadiusDrift: ActionProposal = {
     ...destructiveProposal,
     affectedRecords: 4700,
@@ -203,7 +241,7 @@ const destructiveProposal: ActionProposal = {
 
   const stalePolicyApproval: ApprovalRecord = {
     ...approval,
-    policyVersion: "2026-10-25.1",
+    policyVersion: "2026-10-25.2",
   };
   assert(
     !isExecutionAuthorized(destructiveProposal, stalePolicyApproval, now),

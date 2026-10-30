@@ -19,7 +19,7 @@ export type SabRoute =
   | "REQUIRE_HUMAN_APPROVAL"
   | "DENY";
 
-export const SAB_POLICY_VERSION = "2026-10-25.2";
+export const SAB_POLICY_VERSION = "2026-10-25.3";
 
 export interface ActionProposal {
   id: string;
@@ -263,6 +263,19 @@ export function evaluateProposal(input: unknown): SabDecision {
       );
     }
 
+    if (proposal.estimatedCost === undefined || proposal.estimatedCost > 0) {
+      return decision(
+        "REQUIRE_HUMAN_APPROVAL",
+        consequence,
+        [proposal.estimatedCost === undefined ? "unknown_financial_cost" : "financial_consequence"],
+        true,
+      );
+    }
+
+    if (proposal.containsSecrets === undefined) {
+      return decision("REQUIRE_HUMAN_APPROVAL", consequence, ["unknown_secret_status"], true);
+    }
+
     if (proposal.dataSensitivity === "PUBLIC") {
       return decision("ALLOW", consequence, ["bounded_public_read_only"], false);
     }
@@ -337,7 +350,7 @@ export function isExecutionAuthorized(
 
   if (currentDecision.route === "DENY") return false;
   if (currentDecision.route === "ALLOW" || currentDecision.route === "ALLOW_WITH_LOG") return true;
-  if (!approval?.approved) return false;
+  if (approval?.approved !== true) return false;
   if (approval.policyVersion !== SAB_POLICY_VERSION) return false;
   if (approval.proposalId !== proposal.id) return false;
   if (approval.proposalBinding !== proposalBinding(proposal)) return false;

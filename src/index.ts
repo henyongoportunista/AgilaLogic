@@ -69,11 +69,59 @@ export type {
   RfiStatus,
 } from "./trust.js";
 export {
+  PROVENANCE_INTEGRITY_VERSION,
+  bindProvenanceLedger,
+  provenanceLedgerBinding,
+  verifyProvenanceIntegrity,
+} from "./provenance-integrity.js";
+export type { ProvenanceIntegrityEnvelope } from "./provenance-integrity.js";
+export {
+  MAX_LIFECYCLE_ENTRIES_PER_CONTEXT,
+  REPLAY_GUARD_VERSION,
+  assertArchitectureStateActive,
+  assertEngineeringStateActive,
+  createLifecycleRegistry,
+  registerArchitectureState,
+  registerEngineeringState,
+} from "./replay.js";
+export type {
+  LifecycleKind,
+  LifecycleRegistry,
+  LifecycleRegistryEntry,
+} from "./replay.js";
+export {
+  LIFECYCLE_STORE_VERSION,
+  assertPersistedArchitectureStateActive,
+  assertPersistedLifecyclePairActive,
+  assertPersistedEngineeringStateActive,
+  assertStoredLifecycleRegistry,
+  createInMemoryLifecycleRegistryStore,
+  persistArchitectureState,
+  persistEngineeringState,
+} from "./replay-store.js";
+export type {
+  LifecycleRegistryStore,
+  LifecycleStorageClass,
+  StoredLifecycleRegistry,
+} from "./replay-store.js";
+export {
+  SUPABASE_REPLAY_STORE_VERSION,
+  createSupabaseLifecycleRegistryStore,
+} from "./supabase-replay-store.js";
+export type { SupabaseReplayStoreConfig } from "./supabase-replay-store.js";
+export { RFI_RESOLUTION_VERSION, prepareRfiReinjection } from "./rfi-resolution.js";
+export type {
+  RfiReinjection,
+  RfiResolutionInput,
+  RfiResolutionKind,
+} from "./rfi-resolution.js";
+export {
   NORTHSTAR_IMMUTABLE_PRINCIPLES,
   NORTHSTAR_ROLE_CONTRACTS,
   NORTHSTAR_VERSION,
   assertNorthstarContextFresh,
   compileNorthstarContext,
+  getTrustedNorthstarAuthentication,
   verifyNorthstarContextPack,
 } from "./northstar.js";
 export type {
@@ -88,12 +136,85 @@ export type {
   PrincipalContext,
   PrincipalVerification,
 } from "./northstar.js";
+export {
+  EXTERNAL_AUTH_BOUNDARY_VERSION,
+  createProductionAuthVerifierRegistry,
+  createTestAuthVerifierRegistry,
+  createPublicPrincipalContext,
+  getTrustedPrincipalAuthentication,
+  isExternallyVerifiedPrincipalContext,
+  resolveVerifiedPrincipalContext,
+} from "./external-auth.js";
+export type {
+  AuthenticationAssurance,
+  AuthRuntimeMode,
+  AuthVerifierRegistry,
+  ExternalAuthEvidence,
+  ExternalPrincipalVerifier,
+  ExternalSessionVerification,
+  RejectedExternalSession,
+  VerifiedExternalSession,
+  VerifiedOperatorPrincipal,
+  VerifiedPrincipalContext,
+  TrustedPrincipalAuthentication,
+} from "./external-auth.js";
 export { TRUST_ADMISSION_VERSION, admitForSab } from "./admission.js";
 export type {
   SabAdmissibleCandidate,
   TrustAdmissionInput,
   TrustAdmissionResult,
 } from "./admission.js";
+export {
+  EXECUTION_RECEIPT_VERSION,
+  PRE_EXECUTION_VERSION,
+  assertExecutionPreconditionsUnchanged,
+  assertResourceStateFresh,
+  assertResourceStateUnchanged,
+  bindApprovalToNorthstar,
+  createConsentOperationBinding,
+  createResourceStateSnapshot,
+  preparePreExecution,
+  recordExecutionReceipt,
+  verifyExecutionReceipt,
+  verifyPreExecutionRequest,
+  verifyResourceStateSnapshot,
+  verifySessionBoundApproval,
+} from "./execution.js";
+export type {
+  ConsentBindingInput,
+  CreateResourceStateSnapshotInput,
+  ExecutionOutcome,
+  ExecutionPreconditionCheckInput,
+  ExecutionReceipt,
+  PreExecutionRequest,
+  PreparePreExecutionInput,
+  RecordExecutionReceiptInput,
+  ResourceStateSnapshot,
+  SessionBoundApproval,
+} from "./execution.js";
+export {
+  ASSURANCE_POLICY_VERSION,
+  assertAuthenticationAssurance,
+  requiredAuthenticationAssurance,
+} from "./assurance-policy.js";
+export {
+  HUMAN_CONSENT_VERSION,
+  MAX_CONSENT_CHALLENGES,
+  MAX_HUMAN_CONSENT_TTL_MS,
+  createProductionHumanConsentAuthority,
+  createTestHumanConsentAuthority,
+  getHumanConsentAuthorityMode,
+} from "./human-consent.js";
+export type {
+  HumanConsentAuthority,
+  HumanConsentChallenge,
+  HumanConsentEvidence,
+  HumanConsentReceipt,
+  HumanConsentTransaction,
+  HumanConsentVerification,
+  HumanConsentVerifier,
+  PrincipalConsentCapability,
+} from "./human-consent.js";
 export { createSupabaseAdapter, toAgentPolicy } from "./supabase.js";
 export * from "./types.js";
 export type {

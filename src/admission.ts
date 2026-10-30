@@ -4,6 +4,10 @@ import {
   verifyNorthstarContextPack,
   type NorthstarContextPack,
 } from "./northstar.js";
+import {
+  verifyProvenanceIntegrity,
+  type ProvenanceIntegrityEnvelope,
+} from "./provenance-integrity.js";
 import type { UntrustedSabProposalCandidate } from "./strand.js";
 import {
   TRUST_SPINE_VERSION,
@@ -17,10 +21,11 @@ import {
   type ProvenanceLedger,
 } from "./trust.js";
 
-export const TRUST_ADMISSION_VERSION = "2026-10-25.2" as const;
+export const TRUST_ADMISSION_VERSION = "2026-10-25.3" as const;
 
 export interface TrustAdmissionInput {
   provenanceLedger: ProvenanceLedger;
+  provenanceIntegrity: ProvenanceIntegrityEnvelope;
   architectureState: BoundArchitectureState;
   engineeringState: BoundEngineeringState;
   northstarContext: NorthstarContextPack;
@@ -36,6 +41,7 @@ export interface SabAdmissibleCandidate {
   evidence: {
     architectureTrustBinding: string;
     engineeringTrustBinding: string;
+    provenanceIntegrityBinding: string;
     northstarContextBinding: string;
     attestationId: string;
     adapterId: string;
@@ -98,6 +104,8 @@ function validateFactProvenance(
  * Mandatory structural composition gate before a proposal may be presented to SAB.
  *
  * It does not authenticate the operator, adapter, provenance source, or model.
+ * Provenance integrity here is deterministic/non-cryptographic mutation detection,
+ * not source authentication or tamper-evident persistence against a capable attacker.
  * It does not call SAB and does not grant execution authority.
  */
 export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
@@ -153,6 +161,13 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
     addOnce(reasons, "proposal_engineering_packet_mismatch");
   }
 
+  if (!verifyProvenanceIntegrity(
+    input.provenanceLedger,
+    input.architectureState,
+    input.provenanceIntegrity,
+  )) {
+    addOnce(reasons, "provenance_integrity_invalid");
+  }
   validateFactProvenance(input.provenanceLedger, input.architectureState, reasons);
 
   if (!verifyNorthstarContextPack(input.northstarContext)) {
@@ -198,6 +213,7 @@ export function admitForSab(input: TrustAdmissionInput): TrustAdmissionResult {
       evidence: {
         architectureTrustBinding: input.architectureState.trustBinding,
         engineeringTrustBinding: input.engineeringState.trustBinding,
+        provenanceIntegrityBinding: input.provenanceIntegrity.binding,
         northstarContextBinding: input.northstarContext.contextBinding,
         attestationId: operationComparison.candidate.attestationId,
         adapterId: operationComparison.candidate.adapterId,
