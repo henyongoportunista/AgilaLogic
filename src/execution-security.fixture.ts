@@ -7,6 +7,7 @@ import {
 } from "./external-auth.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
+import { bindProvenanceAttestation } from "./provenance-attestation.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
 import { createInMemoryLifecycleRegistryStore, persistArchitectureState, persistEngineeringState } from "./replay-store.js";
 import { proposalBinding, SAB_POLICY_VERSION, type ActionProposal, type ApprovalRecord } from "./sab.js";
@@ -93,8 +94,18 @@ export async function executionSecurityFixture(options: {
     },
   };
   const provenanceLedger = buildProvenanceLedger(weave);
+  const sourceEntry = provenanceLedger.entries.find((entry) => entry.signalId === "execution-security-fact");
+  if (!sourceEntry) throw new Error("fixture_source_entry_missing");
+  const provenanceAttestations = [bindProvenanceAttestation(sourceEntry, {
+    attestationId: "execution-security-source-attestation",
+    verifierId: "fixture-source-verifier",
+    verifiedAt: "2026-10-25T06:16:00.000Z",
+    expiresAt: "2026-10-25T07:00:00.000Z",
+    evidenceRef: "fixture://source-verification/staging-resource",
+  })];
   const admission = {
     provenanceLedger, provenanceIntegrity: bindProvenanceLedger(provenanceLedger, architectureState),
+    provenanceAttestations,
     architectureState, engineeringState, northstarContext, expectation, attestation,
   };
   const resourceState = createResourceStateSnapshot({

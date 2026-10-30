@@ -7,6 +7,7 @@ import {
 import { createTestHumanConsentAuthority, type HumanConsentVerification } from "./human-consent.js";
 import { weaveSignals } from "./gagamba.js";
 import { compileNorthstarContext } from "./northstar.js";
+import { bindProvenanceAttestation } from "./provenance-attestation.js";
 import { bindProvenanceLedger } from "./provenance-integrity.js";
 import {
   createInMemoryLifecycleRegistryStore,
@@ -214,9 +215,19 @@ const attestation: AdapterAttestation = {
 };
 
 const provenanceLedger = buildProvenanceLedger(weave);
+const sourceEntry = provenanceLedger.entries.find((entry) => entry.signalId === "execution-fact-1");
+assert(sourceEntry !== undefined, "source fixture entry must exist");
+const provenanceAttestations = [bindProvenanceAttestation(sourceEntry, {
+  attestationId: "execution-source-attestation",
+  verifierId: "fixture-source-verifier",
+  verifiedAt: "2026-10-25T06:16:00.000Z",
+  expiresAt: "2026-10-25T07:00:00.000Z",
+  evidenceRef: "fixture://source-verification/staging-customer",
+})];
 const admissionInput = {
   provenanceLedger,
   provenanceIntegrity: bindProvenanceLedger(provenanceLedger, boundArchitecture),
+  provenanceAttestations,
   architectureState: boundArchitecture,
   engineeringState: boundEngineering,
   northstarContext,
@@ -232,9 +243,7 @@ const initialResourceState = createResourceStateSnapshot({
   expiresAt: "2026-10-25T06:45:00.000Z",
 });
 
-
 const operationBinding = createConsentOperationBinding({ admission: admissionInput, resourceState: initialResourceState });
-// Explicit simulated independent response storage; this assigns no real human governance power.
 const consentResponses = new Map<string, HumanConsentVerification>();
 const consentAuthority = createTestHumanConsentAuthority({
   providerId: "execution-consent-fixture",
@@ -274,7 +283,6 @@ const sessionApproval = bindApprovalToNorthstar(
   { authority: consentAuthority, receipt: consentReceipt, operationBinding },
   "test",
 );
-
 
 const lifecycleStore = createInMemoryLifecycleRegistryStore();
 
